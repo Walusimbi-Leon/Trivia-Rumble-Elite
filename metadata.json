@@ -1,0 +1,6 @@
+{
+  "name": "Trivia Rumble Elite",
+  "description": "Fast-paced multiplayer trivia game for Discord Activities and web browsers with global synchronized countdown and persistent leaderboards.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

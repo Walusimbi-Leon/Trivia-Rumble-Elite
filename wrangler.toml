@@ -1,0 +1,9 @@
+name = "trivia-rumble-elite"
+main = "dist/worker.js"
+compatibility_date = "2026-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+FIREBASE_RTDB_URL = "https://studio-3101124565-bd63c-default-rtdb.firebaseio.com"
+FIREBASE_DB_SECRET = "V6BCS2vL24IlYodAvZ6t6h5fbBYJEOdBM8JYUI30"
+SUPPORT_URL = "https://donate-to-sgss.pages.dev"
