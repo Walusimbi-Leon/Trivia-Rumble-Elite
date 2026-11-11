@@ -1,0 +1,49 @@
+{
+  "rules": {
+    "trivia": {
+      "global": {
+        "game": {
+          ".read": true,
+          ".write": "auth != null && auth.token.admin === true",
+          ".validate": "newData.hasChildren(['bankLen', 'questionStart', 'slotDuration'])"
+        },
+        "bank": {
+          ".read": true,
+          ".write": "auth != null && auth.token.admin === true",
+          "$questionId": {
+            ".validate": "newData.exists() && newData.hasChildren(['question', 'options', 'correctAnswer']) && newData.child('options').hasChildren() && newData.child('correctAnswer').isNumber()"
+          }
+        },
+        "players": {
+          ".read": true,
+          "$playerId": {
+            ".write": "!data.exists() || newData.exists()",
+            ".validate": "newData.hasChildren(['id', 'username', 'score']) && newData.child('score').isNumber() && newData.child('score').val() >= 0 && (!data.exists() || newData.child('score').val() >= data.child('score').val())",
+            "score": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && (!data.exists() || newData.val() >= data.val())"
+            },
+            "username": {
+              ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 32"
+            },
+            "platform": {
+              ".validate": "newData.val() == 'discord' || newData.val() == 'browser'"
+            }
+          }
+        },
+        "answers": {
+          ".read": true,
+          "$slot": {
+            "$playerId": {
+              ".write": "newData.exists()",
+              ".validate": "newData.hasChildren(['answer', 'at']) && newData.child('answer').isNumber() && newData.child('answer').val() >= 0 && newData.child('answer').val() <= 3 && newData.child('at').isNumber()"
+            }
+          }
+        }
+      }
+    },
+    "$other": {
+      ".read": false,
+      ".write": false
+    }
+  }
+}
