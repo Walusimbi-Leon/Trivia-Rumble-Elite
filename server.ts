@@ -330,38 +330,56 @@ app.post('/api/trivia', (req: Request, res: Response) => {
   });
 });
 
+// 2b. Discord Client Config
+app.get('/api/discord-config', (_req: Request, res: Response) => {
+  res.json({
+    clientId: (process.env.DISCORD_CLIENT_ID || '1535428947624460328').trim(),
+  });
+});
+
 // 3. Discord OAuth Code Exchange Proxy
 app.post('/api/exchange', async (req: Request, res: Response) => {
-  const { code } = req.body;
-  const clientId = process.env.DISCORD_CLIENT_ID || '1535428947624460328';
-  const clientSecret = process.env.DISCORD_CLIENT_SECRET;
+  const code = typeof req.body?.code === 'string' ? req.body.code.trim() : '';
+  const clientId = String(
+    req.body?.client_id || req.body?.clientId || process.env.DISCORD_CLIENT_ID || '1535428947624460328'
+  ).trim();
+  const clientSecret = String(process.env.DISCORD_CLIENT_SECRET || '').trim();
+  const redirectUri = String(
+    req.body?.redirect_uri || req.body?.redirectUri || process.env.REDIRECT_URI || ''
+  ).trim();
 
   if (!code) {
     return res.status(400).json({ error: 'Missing code' });
   }
 
   if (!clientSecret) {
-    // Return graceful mock/public fallback if client secret not yet configured
-    console.warn('[Discord OAuth] DISCORD_CLIENT_SECRET not configured in .env. Falling back.');
+    console.warn('[Discord OAuth] DISCORD_CLIENT_SECRET not configured in .env.');
     return res.status(501).json({ error: 'Discord Client Secret not configured on server' });
   }
 
-  try {
+  const exchange = async (withRedirect: string) => {
     const params = new URLSearchParams({
       client_id: clientId,
       client_secret: clientSecret,
       grant_type: 'authorization_code',
       code,
     });
-
+    if (withRedirect) params.set('redirect_uri', withRedirect);
     const response = await fetch('https://discord.com/api/v10/oauth2/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: params.toString(),
     });
+    const data = await response.json().catch(() => ({}));
+    return { ok: response.ok, status: response.status, data };
+  };
 
-    const data = await response.json();
-    return res.status(response.status).json(data);
+  try {
+    let result = await exchange(redirectUri);
+    if (!result.ok && redirectUri && result.status === 400) {
+      result = await exchange('');
+    }
+    return res.status(result.status).json(result.data);
   } catch (err: any) {
     console.error('[Discord OAuth] Exchange error:', err);
     return res.status(500).json({ error: err.message || 'Token exchange failed' });

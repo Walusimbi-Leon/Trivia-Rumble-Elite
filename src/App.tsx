@@ -1,16 +1,35 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Player, Question, GameState, CurrentSlotInfo } from './types';
-import { initDiscord, inDiscordFrame, openExternalUrl } from './discord';
+import {
+  initDiscord,
+  inDiscordFrame,
+  openExternalUrl,
+  getDiscordAvatarUrl,
+  getDiscordDisplayName,
+} from './discord';
 import { dbRead, dbReadRange, dbWrite, dbUpdate } from './firebaseClient';
 import { Header } from './components/Header';
 import { QuestionCard } from './components/QuestionCard';
 import { Leaderboard } from './components/Leaderboard';
 import { LegalModal } from './components/LegalModal';
+import initialBankJson from './data/initial_bank.json';
 
 const SLOT_DURATION = 20000;
+// Stable global tournament epoch matching server.ts and Firebase /trivia/global/game
+const DEFAULT_GAME_EPOCH = 1793995178901;
+
 // Updated donation dashboard URL
 const SUPPORT_URL = 'https://donate-to-sgss.pages.dev';
+
 const P = 'trivia/global';
+
+const FALLBACK_BANK: Question[] = (() => {
+  const raw = initialBankJson as Record<string, any>;
+  return Object.keys(raw)
+    .sort((a, b) => Number(a) - Number(b))
+    .map((k) => raw[k])
+    .filter((q) => q && q.question && Array.isArray(q.options));
+})();
 
 function guestNameFromId(gid: string): string {
   let sum = 0;
@@ -23,6 +42,27 @@ const isLive = (p?: Player | null, myId?: string): boolean => {
   if (myId && p.id === myId) return true;
   return Boolean(p.online && p.lastSeen && Date.now() - Number(p.lastSeen) < 180000);
 };
+
+function filterSlotAnswers(
+  raw: Record<string, { answer: number; at: number }> | null | undefined,
+  slotStart: number,
+  slotEnd: number
+): Record<string, { answer: number; at: number }> {
+  if (!raw || typeof raw !== 'object') return {};
+  const valid: Record<string, { answer: number; at: number }> = {};
+  for (const [pid, rec] of Object.entries(raw)) {
+    if (
+      rec &&
+      typeof rec === 'object' &&
+      typeof rec.at === 'number' &&
+      rec.at >= slotStart - 2000 &&
+      rec.at <= slotEnd + 2000
+    ) {
+      valid[pid] = rec;
+    }
+  }
+  return valid;
+}
 
 export default function App() {
   // ── State ──────────────────────────────────────────────────────────────────
@@ -40,7 +80,7 @@ export default function App() {
   });
 
   const [game, setGame] = useState<GameState | null>(null);
-  const [bank, setBank] = useState<Question[]>([]);
+  const [bank, setBank] = useState<Question[]>(FALLBACK_BANK);
   const [players, setPlayers] = useState<Record<string, Player>>({});
   const [answers, setAnswers] = useState<Record<string, { answer: number; at: number }>>({});
 
@@ -63,6 +103,9 @@ export default function App() {
   const bankRef = useRef<Question[]>(bank);
   bankRef.current = bank;
 
+  const currentSlotInfoRef = useRef<CurrentSlotInfo | null>(currentSlotInfo);
+  currentSlotInfoRef.current = currentSlotInfo;
+
   const clockOffsetRef = useRef<number>(0);
   const currentSlotRef = useRef<number>(-1);
   const hasAnsweredRef = useRef<boolean>(false);
@@ -73,17 +116,44 @@ export default function App() {
   // ── Sync Clock & Game State ────────────────────────────────────────────────
   const syncTime = useCallback(async () => {
     try {
-      const res = await fetch('/api/time');
+      const t0 = Date.now();
+      const res = await fetch('/api/time', { cache: 'no-store' });
+      const t1 = Date.now();
       if (res.ok) {
         const data = await res.json();
-        clockOffsetRef.current = data.now - Date.now();
+        const rttMid = (t0 + t1) / 2;
+        if (typeof data.now === 'number') {
+          clockOffsetRef.current = data.now - rttMid;
+        }
         if (data.game) {
-          setGame(data.game);
+          const epoch = Number(data.game.startedAt) || Number(data.game.questionStart) || DEFAULT_GAME_EPOCH;
+          const nextGame: GameState = {
+            bankLen: Number(data.game.bankLen) || FALLBACK_BANK.length,
+            slotDuration: Number(data.game.slotDuration) || SLOT_DURATION,
+            startedAt: epoch,
+            questionStart: epoch,
+          };
+          setGame(nextGame);
+          return nextGame;
         }
       }
-    } catch (e) {
-      // keep existing offset
+    } catch {
+      // keep existing offset or use deterministic epoch fallback below
     }
+
+    if (!gameRef.current) {
+      const fbGame = await dbRead<GameState>(`${P}/game`).catch(() => null);
+      const epoch = Number(fbGame?.startedAt) || Number(fbGame?.questionStart) || DEFAULT_GAME_EPOCH;
+      const fallbackGame: GameState = {
+        bankLen: Number(fbGame?.bankLen) || FALLBACK_BANK.length,
+        slotDuration: Number(fbGame?.slotDuration) || SLOT_DURATION,
+        startedAt: epoch,
+        questionStart: epoch,
+      };
+      setGame(fallbackGame);
+      return fallbackGame;
+    }
+    return gameRef.current;
   }, []);
 
   // ── Resolve Identity ───────────────────────────────────────────────────────
@@ -93,10 +163,8 @@ export default function App() {
       if (discordInfo.user) {
         return {
           id: 'u' + discordInfo.user.id,
-          username: discordInfo.user.global_name || discordInfo.user.username || 'Player',
-          avatarUrl: discordInfo.user.avatar
-            ? `https://cdn.discordapp.com/avatars/${discordInfo.user.id}/${discordInfo.user.avatar}.png`
-            : '',
+          username: getDiscordDisplayName(discordInfo.user),
+          avatarUrl: getDiscordAvatarUrl(discordInfo.user),
           platform: 'discord',
           score: 0,
           online: true,
@@ -112,15 +180,14 @@ export default function App() {
     let gid: string | null = null;
     try {
       gid = localStorage.getItem(key);
-    } catch (e) {
+    } catch {
       /* private browsing */
     }
-
     if (!gid) {
       gid = 'g' + Math.random().toString(36).slice(2, 10);
       try {
         localStorage.setItem(key, gid);
-      } catch (e) {
+      } catch {
         /* ignore */
       }
     }
@@ -149,7 +216,8 @@ export default function App() {
         return list;
       }
     }
-    return [];
+    setBank(FALLBACK_BANK);
+    return FALLBACK_BANK;
   }, []);
 
   // ── Join Global Room ───────────────────────────────────────────────────────
@@ -185,6 +253,7 @@ export default function App() {
       });
     }
 
+    meRef.current = finalUser;
     setMe(finalUser);
     setPlayers((prev) => ({
       ...prev,
@@ -203,7 +272,7 @@ export default function App() {
           online: document.visibilityState !== 'hidden',
           lastSeen: Date.now(),
         });
-      } catch (e) {
+      } catch {
         /* ignore */
       }
     };
@@ -214,7 +283,7 @@ export default function App() {
 
     const onUnload = () => {
       const current = meRef.current;
-      if (current.id) {
+      if (current.id && current.id !== 'guest') {
         dbUpdate(`${P}/players/${current.id}`, { online: false, lastSeen: Date.now() }).catch(() => {});
       }
     };
@@ -227,14 +296,38 @@ export default function App() {
     };
   }, []);
 
-  // ── Sync Players & Leaderboard Polling ──────────────────────────────────────
+  // ── Sync Players, Live Answers & Leaderboard Polling ───────────────────────
   const syncPlayers = useCallback(async () => {
+    const currentMe = meRef.current;
+    if (!currentMe.id || currentMe.id === 'guest') return;
+
     try {
-      const top = await dbReadRange<Record<string, Player>>(`${P}/players`, {
-        orderBy: '"$key"',
-        limitToLast: '80',
-      });
-      const self = await dbRead<Player>(`${P}/players/${meRef.current.id}`);
+      const activeSlot = currentSlotInfoRef.current;
+      const [top, self, slotAnswers] = await Promise.all([
+        dbReadRange<Record<string, Player>>(`${P}/players`, {
+          orderBy: '"$key"',
+          limitToLast: '80',
+        }),
+        dbRead<Player>(`${P}/players/${currentMe.id}`),
+        activeSlot
+          ? dbRead<Record<string, { answer: number; at: number }>>(`${P}/answers/${activeSlot.realSlot}`)
+          : Promise.resolve(null),
+      ]);
+
+      const localScore = meRef.current.score || 0;
+      const serverScore = typeof self?.score === 'number' ? self.score : 0;
+      const resolvedScore = Math.max(localScore, serverScore);
+
+      const myProfile: Player = {
+        ...meRef.current,
+        ...(self || {}),
+        username: meRef.current.platform === 'discord' ? meRef.current.username : (self?.username || meRef.current.username),
+        avatarUrl: meRef.current.platform === 'discord' ? meRef.current.avatarUrl : (self?.avatarUrl ?? meRef.current.avatarUrl),
+        platform: meRef.current.platform === 'discord' ? 'discord' : (self?.platform || meRef.current.platform),
+        online: true,
+        lastSeen: Date.now(),
+        score: resolvedScore,
+      };
 
       setPlayers((prev) => {
         const next = { ...prev };
@@ -245,30 +338,22 @@ export default function App() {
             }
           }
         }
-        const localScore = meRef.current.score || 0;
-        const serverScore = typeof self?.score === 'number' ? self.score : 0;
-        // Never allow score to drop: resolve to highest known score
-        const resolvedScore = Math.max(localScore, serverScore);
-
-        const myProfile: Player = {
-          ...meRef.current,
-          ...(self || {}),
-          online: true,
-          lastSeen: Date.now(),
-          score: resolvedScore,
-        };
-
-        next[meRef.current.id] = myProfile;
-
-        // If local had a newer score that wasn't reflected yet, persist it
-        if (localScore > serverScore) {
-          dbUpdate(`${P}/players/${meRef.current.id}`, { score: resolvedScore }).catch(() => {});
-        }
-
-        setMe((m) => (m.score !== resolvedScore ? { ...m, score: resolvedScore } : m));
+        next[myProfile.id] = myProfile;
         return next;
       });
-    } catch (e) {
+
+      if (meRef.current.score !== resolvedScore) {
+        setMe((m) => (m.score !== resolvedScore ? { ...m, score: resolvedScore } : m));
+      }
+
+      if (localScore > serverScore) {
+        dbUpdate(`${P}/players/${myProfile.id}`, { score: resolvedScore }).catch(() => {});
+      }
+
+      if (activeSlot && slotAnswers && currentSlotInfoRef.current?.slot === activeSlot.slot) {
+        setAnswers(filterSlotAnswers(slotAnswers, activeSlot.slotStart, activeSlot.slotEnd));
+      }
+    } catch {
       /* ignore */
     }
   }, []);
@@ -276,16 +361,16 @@ export default function App() {
   // ── Initial Boot ───────────────────────────────────────────────────────────
   useEffect(() => {
     let mounted = true;
-
     async function boot() {
       try {
         setLoading(true);
-        await syncTime();
-        const resolved = await resolveIdentity();
+        const [, , resolved] = await Promise.all([
+          syncTime(),
+          loadBank(),
+          resolveIdentity(),
+        ]);
         if (!mounted) return;
-
         await joinGlobal(resolved);
-        await loadBank();
 
         const all = await dbRead<Record<string, Player>>(`${P}/players`).catch(() => null);
         if (mounted && all && typeof all === 'object') {
@@ -294,6 +379,9 @@ export default function App() {
             if (p && typeof p === 'object') {
               normalized[k] = { ...p, id: p.id || k };
             }
+          }
+          if (meRef.current.id && meRef.current.id !== 'guest') {
+            normalized[meRef.current.id] = meRef.current;
           }
           setPlayers(normalized);
         }
@@ -311,15 +399,14 @@ export default function App() {
     }
 
     boot();
-
     return () => {
       mounted = false;
     };
   }, [syncTime, loadBank]);
 
-  // Periodic Leaderboard sync
+  // Periodic Leaderboard & Clock sync
   useEffect(() => {
-    const interval = setInterval(syncPlayers, 5000);
+    const interval = setInterval(syncPlayers, 4000);
     const clockInterval = setInterval(syncTime, 5 * 60 * 1000);
     return () => {
       clearInterval(interval);
@@ -327,22 +414,24 @@ export default function App() {
     };
   }, [syncPlayers, syncTime]);
 
-  // ── Continuous Question Slot Advancement (Zero-Lag Engine) ─────────────────
+  // ── Continuous Question Slot Advancement (Global Synchronized Engine) ──────
   useEffect(() => {
     const checkSlot = () => {
       const g = gameRef.current;
       const b = bankRef.current;
-      if (!g || !g.questionStart || !b.length) return;
+      if (!g || !b.length) return;
 
+      // Always anchor slot math on the fixed tournament epoch (`startedAt`),
+      // never on a shifting per-slot timestamp, so every player sees the same question.
+      const epoch = g.startedAt || g.questionStart || DEFAULT_GAME_EPOCH;
       const duration = g.slotDuration || SLOT_DURATION;
-      const elapsed = Math.max(0, now() - g.questionStart);
+      const elapsed = Math.max(0, now() - epoch);
       const slot = Math.floor(elapsed / duration);
       const realSlot = slot % b.length;
       const q = b[realSlot];
-
       if (!q) return;
 
-      // Slot transition: New question arrives
+      // Slot transition: New question arrives synchronously for everyone
       if (slot !== currentSlotRef.current) {
         currentSlotRef.current = slot;
         setMyAnswer(null);
@@ -351,31 +440,40 @@ export default function App() {
         setLastGain(0);
         setAnswers({});
 
-        const slotStart = g.questionStart + slot * duration;
+        const slotStart = epoch + slot * duration;
         const slotEnd = slotStart + duration;
-
-        setCurrentSlotInfo({
+        const nextSlotInfo: CurrentSlotInfo = {
           slot,
           realSlot,
           index: slot + 1,
           question: q,
           slotStart,
           slotEnd,
-        });
+        };
+        currentSlotInfoRef.current = nextSlotInfo;
+        setCurrentSlotInfo(nextSlotInfo);
 
-        // Load existing answers for this slot
+        // Load active round answers only (filtering out older cycle rounds)
         dbRead<Record<string, { answer: number; at: number }>>(`${P}/answers/${realSlot}`)
           .then((data) => {
-            if (data && typeof data === 'object') setAnswers(data);
+            if (currentSlotRef.current !== slot) return;
+            const valid = filterSlotAnswers(data, slotStart, slotEnd);
+            setAnswers(valid);
+            const mine = meRef.current.id ? valid[meRef.current.id] : undefined;
+            if (mine && typeof mine.answer === 'number' && !hasAnsweredRef.current) {
+              setMyAnswer(mine.answer);
+              setHasAnswered(true);
+              setRevealed(true);
+            }
           })
           .catch(() => {});
       }
     };
 
     checkSlot();
-    const interval = setInterval(checkSlot, 400);
+    const interval = setInterval(checkSlot, 250);
     return () => clearInterval(interval);
-  }, [now]);
+  }, [now, game, bank]);
 
   // Handle timer expiration without state thrashing
   const handleTimeUp = useCallback(() => {
@@ -425,12 +523,12 @@ export default function App() {
     if (isCorrect) {
       const nextScore = (me.score || 0) + gain;
       const updatedUser: Player = { ...me, score: nextScore };
+      meRef.current = updatedUser;
       setMe(updatedUser);
       setPlayers((prev) => ({
         ...prev,
         [me.id]: updatedUser,
       }));
-
       // Immediately write score to Firebase
       dbUpdate(`${P}/players/${me.id}`, { score: nextScore }).catch((e) => {
         console.warn('Score sync failed:', e);

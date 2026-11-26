@@ -6,7 +6,6 @@ import esbuild from 'esbuild';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT = path.join(__dirname, '..');
-
 const DIST = path.join(ROOT, 'dist');
 const ASSETS_DIR = path.join(DIST, 'assets');
 
@@ -30,13 +29,16 @@ if (fs.existsSync(ASSETS_DIR)) {
   }
 }
 
-// 3. Read initial questions
+// 3. Read all initial questions in deterministic numeric key order
 const bankPath = path.join(ROOT, 'src', 'data', 'initial_bank.json');
 let starterBank = [];
 if (fs.existsSync(bankPath)) {
   try {
     const raw = JSON.parse(fs.readFileSync(bankPath, 'utf-8'));
-    starterBank = Object.values(raw).slice(0, 500); // 500 questions in memory
+    starterBank = Object.keys(raw)
+      .sort((a, b) => Number(a) - Number(b))
+      .map((k) => raw[k])
+      .filter((q) => q && q.question && Array.isArray(q.options));
     console.log(`[bundle_worker] Inlined ${starterBank.length} starter questions into worker memory.`);
   } catch (e) {
     console.warn('[bundle_worker] Failed to parse initial_bank.json:', e);
@@ -44,16 +46,16 @@ if (fs.existsSync(bankPath)) {
 }
 
 // 4. Generate worker source file
-const workerSource = `
-// ── TRIVIA RUMBLE ELITE: CLOUDFLARE WORKER ──────────────────────────────────
+const workerSource = `// ── TRIVIA RUMBLE ELITE: CLOUDFLARE WORKER ──────────────────────────────────
 // High-performance V8 edge isolate game engine for Discord Activities & Browser
 
 const FIREBASE_RTDB_DEFAULT = "https://studio-3101124565-bd63c-default-rtdb.firebaseio.com";
 const FIREBASE_SECRET_DEFAULT = "V6BCS2vL24IlYodAvZ6t6h5fbBYJEOdBM8JYUI30";
 const SUPPORT_REDIRECT_URL = "https://donate-to-sgss.pages.dev";
-
+const DEFAULT_DISCORD_CLIENT_ID = "1535428947624460328";
 const SLOT_DURATION = 20000; // 20s per question
-const GAME_STARTED_AT = 1725488315000;
+// Stable global tournament epoch matching server.ts and Firebase /trivia/global/game
+const GAME_STARTED_AT = 1793995178901;
 
 // Inlined Production Assets
 const INDEX_HTML = ${JSON.stringify(indexHtml)};
@@ -99,11 +101,33 @@ function getGameState(now = Date.now()) {
   return {
     bankLen,
     slotDuration: SLOT_DURATION,
-    questionStart: slotStart,
+    // Always return fixed epoch so clients compute identical global slot indices
+    questionStart: GAME_STARTED_AT,
     startedAt: GAME_STARTED_AT,
+    slotStart,
+    slotEnd: slotStart + SLOT_DURATION,
     currentSlot,
     currentIndex: currentSlot % bankLen,
   };
+}
+
+async function exchangeDiscordCode(clientId, clientSecret, code, redirectUri) {
+  const params = new URLSearchParams({
+    client_id: clientId,
+    client_secret: clientSecret,
+    grant_type: "authorization_code",
+    code,
+  });
+  if (redirectUri) {
+    params.set("redirect_uri", redirectUri);
+  }
+  const resp = await fetch("https://discord.com/api/v10/oauth2/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: params.toString(),
+  });
+  const data = await resp.json().catch(() => ({}));
+  return { ok: resp.ok, status: resp.status, data };
 }
 
 export default {
@@ -149,37 +173,42 @@ export default {
         });
       }
 
+      // 3b. Discord Client Config
+      if (path === "/api/discord-config" && method === "GET") {
+        return json({
+          clientId: (env?.DISCORD_CLIENT_ID || DEFAULT_DISCORD_CLIENT_ID).trim(),
+        });
+      }
+
       // 4. Discord OAuth Code Exchange
       if (path === "/api/exchange" && method === "POST") {
         try {
           const body = await request.json().catch(() => ({}));
-          const code = body?.code;
-          const clientId = env?.DISCORD_CLIENT_ID || "1535428947624460328";
-          const clientSecret = env?.DISCORD_CLIENT_SECRET;
+          const code = typeof body?.code === "string" ? body.code.trim() : "";
+          const clientId = String(
+            body?.client_id || body?.clientId || env?.DISCORD_CLIENT_ID || DEFAULT_DISCORD_CLIENT_ID
+          ).trim();
+          const clientSecret = String(env?.DISCORD_CLIENT_SECRET || "").trim();
+          const redirectUri = String(
+            body?.redirect_uri || body?.redirectUri || env?.REDIRECT_URI || url.origin
+          ).trim();
 
           if (!code) {
             return json({ error: "Missing code" }, 400);
           }
-
           if (!clientSecret) {
             return json({ error: "Discord client secret not configured on edge" }, 501);
           }
 
-          const params = new URLSearchParams({
-            client_id: clientId,
-            client_secret: clientSecret,
-            grant_type: "authorization_code",
-            code,
-          });
+          let result = await exchangeDiscordCode(clientId, clientSecret, code, redirectUri);
 
-          const resp = await fetch("https://discord.com/api/v10/oauth2/token", {
-            method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: params.toString(),
-          });
+          // If Discord Activity exchange succeeded/failed specifically on redirect_uri mismatch,
+          // retry without redirect_uri (Discord Embedded App SDK exchanges often omit it).
+          if (!result.ok && redirectUri && result.status === 400) {
+            result = await exchangeDiscordCode(clientId, clientSecret, code, "");
+          }
 
-          const tokenData = await resp.json();
-          return json(tokenData, resp.status);
+          return json(result.data, result.status);
         } catch (err) {
           return json({ error: err.message || "Token exchange failed" }, 500);
         }
@@ -216,19 +245,16 @@ export default {
         const target = \`\${upstreamBase}/\${subPath}\${searchParams.toString() ? "?" + searchParams.toString() : ""}\`;
 
         // Attempt upstream fetch
+        let reqBody = null;
+        if (effectiveMethod !== "GET" && effectiveMethod !== "HEAD") {
+          reqBody = await request.text();
+        }
         try {
-          const isBodyMethod = effectiveMethod !== "GET" && effectiveMethod !== "HEAD";
-          let reqBody = null;
-          if (isBodyMethod) {
-            reqBody = await request.text();
-          }
-
           const upstreamRes = await fetch(target, {
             method: effectiveMethod,
             headers: reqBody ? { "Content-Type": "application/json" } : undefined,
             body: reqBody || undefined,
           });
-
           if (upstreamRes.ok) {
             const data = await upstreamRes.text();
             return new Response(data, {
@@ -247,22 +273,15 @@ export default {
         // Local Edge Fallback for offline resilience
         const cleanRaw = subPath.replace(/\\.json$/, "");
 
-        // Bank query
         if (cleanRaw === "trivia/global/bank") {
           return json(STARTER_BANK);
         }
-
-        // Game query
         if (cleanRaw === "trivia/global/game") {
           return json(getGameState());
         }
-
-        // Players list
         if (cleanRaw === "trivia/global/players") {
           return json(memoryPlayers);
         }
-
-        // Specific player
         const pMatch = cleanRaw.match(/^trivia\\/global\\/players\\/([^/]+)$/);
         if (pMatch) {
           const pid = pMatch[1];
@@ -270,10 +289,24 @@ export default {
             return json(memoryPlayers[pid] || null);
           }
           if (effectiveMethod === "PUT" || effectiveMethod === "PATCH") {
-            const body = await request.json().catch(() => ({}));
+            const body = reqBody ? JSON.parse(reqBody) : {};
             memoryPlayers[pid] = { ...(memoryPlayers[pid] || { id: pid }), ...body };
             return json(memoryPlayers[pid]);
           }
+        }
+
+        const aSlotMatch = cleanRaw.match(/^trivia\\/global\\/answers\\/(\\d+)$/);
+        if (aSlotMatch) {
+          const slot = aSlotMatch[1];
+          return json(memoryAnswers[slot] || {});
+        }
+        const aPlayerMatch = cleanRaw.match(/^trivia\\/global\\/answers\\/(\\d+)\\/([^/]+)$/);
+        if (aPlayerMatch) {
+          const [, slot, pid] = aPlayerMatch;
+          const body = reqBody ? JSON.parse(reqBody) : {};
+          if (!memoryAnswers[slot]) memoryAnswers[slot] = {};
+          memoryAnswers[slot][pid] = body;
+          return json(body);
         }
 
         return json(null);
@@ -282,10 +315,9 @@ export default {
       // 7. Static Inlined Assets (/assets/*)
       if (ASSETS[path]) {
         const ext = path.split(".").pop() || "";
-        const mime = ext === "css" 
-          ? "text/css; charset=utf-8" 
+        const mime = ext === "css"
+          ? "text/css; charset=utf-8"
           : "application/javascript; charset=utf-8";
-
         return new Response(ASSETS[path], {
           status: 200,
           headers: {
@@ -297,9 +329,7 @@ export default {
       }
 
       // 8. Root & SPA Routes
-      // /privacy, /terms, /, or unknown paths serve index.html
       return html(INDEX_HTML);
-
     } catch (fatal) {
       console.error("[TriviaRumbleElite] Worker uncaught error:", fatal);
       return json({ error: "Internal Edge Worker Error", details: fatal.message }, 500);
