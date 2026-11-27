@@ -560,6 +560,23 @@ async function syncBankFromFirebase() {
   }
 }
 
+// Legal standalone HTML routes (/terms and /privacy)
+app.get(['/terms', '/terms.html'], (_req: Request, res: Response) => {
+  const distFile = path.join(__dirname, 'dist', 'terms.html');
+  const pubFile = path.join(__dirname, 'public', 'terms.html');
+  const filePath = fs.existsSync(distFile) ? distFile : pubFile;
+  if (fs.existsSync(filePath)) return res.sendFile(filePath);
+  return res.status(404).send('Terms of Service not found');
+});
+
+app.get(['/privacy', '/privacy.html'], (_req: Request, res: Response) => {
+  const distFile = path.join(__dirname, 'dist', 'privacy.html');
+  const pubFile = path.join(__dirname, 'public', 'privacy.html');
+  const filePath = fs.existsSync(distFile) ? distFile : pubFile;
+  if (fs.existsSync(filePath)) return res.sendFile(filePath);
+  return res.status(404).send('Privacy Policy not found');
+});
+
 async function startServer() {
   await syncBankFromFirebase();
 

@@ -14,8 +14,16 @@ if (!fs.existsSync(DIST)) {
   process.exit(1);
 }
 
-// 1. Read dist/index.html
+// 1. Read dist/index.html, terms.html, and privacy.html
 const indexHtml = fs.readFileSync(path.join(DIST, 'index.html'), 'utf-8');
+const termsHtmlPath = fs.existsSync(path.join(DIST, 'terms.html'))
+  ? path.join(DIST, 'terms.html')
+  : path.join(ROOT, 'public', 'terms.html');
+const privacyHtmlPath = fs.existsSync(path.join(DIST, 'privacy.html'))
+  ? path.join(DIST, 'privacy.html')
+  : path.join(ROOT, 'public', 'privacy.html');
+const termsHtml = fs.existsSync(termsHtmlPath) ? fs.readFileSync(termsHtmlPath, 'utf-8') : indexHtml;
+const privacyHtml = fs.existsSync(privacyHtmlPath) ? fs.readFileSync(privacyHtmlPath, 'utf-8') : indexHtml;
 
 // 2. Read all assets in dist/assets
 const assets = {};
@@ -57,6 +65,8 @@ const GAME_STARTED_AT = 1793995178901;
 
 // Inlined Production Assets
 const INDEX_HTML = ${JSON.stringify(indexHtml)};
+const TERMS_HTML = ${JSON.stringify(termsHtml)};
+const PRIVACY_HTML = ${JSON.stringify(privacyHtml)};
 const ASSETS = ${JSON.stringify(assets)};
 
 // Inlined starter questions
@@ -266,7 +276,13 @@ export default {
     }
 
     try {
-      // 1. Support & Donation Redirect
+      // 1. Legal Pages (/terms & /privacy) & Support Redirect
+      if (path === "/terms" || path === "/terms/" || path === "/terms.html") {
+        return html(TERMS_HTML);
+      }
+      if (path === "/privacy" || path === "/privacy/" || path === "/privacy.html") {
+        return html(PRIVACY_HTML);
+      }
       if (path === "/support") {
         return Response.redirect(SUPPORT_REDIRECT_URL, 302);
       }

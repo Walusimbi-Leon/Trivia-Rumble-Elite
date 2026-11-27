@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, Shield, FileText } from 'lucide-react';
+import { X, Shield, FileText, ExternalLink } from 'lucide-react';
 
 interface LegalModalProps {
   type: 'privacy' | 'terms' | null;
@@ -22,7 +22,7 @@ export const LegalModal: React.FC<LegalModalProps> = ({ type, onClose }) => {
               <h3 className="text-base font-black text-white">
                 {type === 'privacy' ? 'Privacy Policy' : 'Terms of Service'}
               </h3>
-              <p className="text-xs text-[#a59ecc]">Trivia Rumble Elite · Updated 2026</p>
+              <p className="text-xs text-[#a59ecc]">Trivia Rumble Elite · Updated November 27, 2026</p>
             </div>
           </div>
           <button
@@ -38,14 +38,14 @@ export const LegalModal: React.FC<LegalModalProps> = ({ type, onClose }) => {
           {type === 'privacy' ? (
             <>
               <p>
-                Trivia Rumble Elite (&quot;the Game&quot;, &quot;we&quot;, &quot;us&quot;) is a multiplayer trivia activity playable inside Discord or in a web browser. This policy explains what information the Game collects and how it is used.
+                Trivia Rumble Elite (&quot;the Game&quot;, &quot;we&quot;, &quot;us&quot;) is a multiplayer trivia game playable inside Discord or in a web browser. This policy explains what information the Game collects and how it is used.
               </p>
+
               <h4 className="text-sm font-bold text-[#00f5ff]">1. Information We Collect</h4>
               <ul className="list-disc pl-5 space-y-1 text-[#a59ecc]">
                 <li><strong>Discord identity (when playing via Discord):</strong> your Discord user ID, username, and avatar — used to display your name, avatar, and score on the in-game leaderboard.</li>
-                <li><strong>Channel ID:</strong> used to identify the current voice room session in Discord.</li>
                 <li><strong>Guest identity (when playing in a browser):</strong> a randomly generated persistent ID stored in your browser&apos;s local storage so your progress is maintained.</li>
-                <li><strong>Game data:</strong> answers, timing, and accumulated score stored in the database.</li>
+                <li><strong>Game data:</strong> answers, timing, online status, and accumulated score stored in Firebase Realtime Database.</li>
               </ul>
 
               <h4 className="text-sm font-bold text-[#00f5ff]">2. How We Use the Data</h4>
@@ -54,9 +54,9 @@ export const LegalModal: React.FC<LegalModalProps> = ({ type, onClose }) => {
                 <li>To preserve returning player scores and statistics across sessions.</li>
               </ul>
 
-              <h4 className="text-sm font-bold text-[#00f5ff]">3. Data Protection</h4>
+              <h4 className="text-sm font-bold text-[#00f5ff]">3. Data Protection &amp; Deletion</h4>
               <p className="text-[#a59ecc]">
-                We do not sell, rent, or trade your personal information. We do not read Discord messages or server content.
+                We do not sell, rent, or trade your personal information, and we do not read Discord messages or server content. To request data removal, contact <a href="mailto:walusimbileon2@gmail.com" className="text-[#38bdf8] underline">walusimbileon2@gmail.com</a>.
               </p>
             </>
           ) : (
@@ -64,23 +64,53 @@ export const LegalModal: React.FC<LegalModalProps> = ({ type, onClose }) => {
               <p>
                 Welcome to Trivia Rumble Elite (&quot;the Game&quot;). By accessing or playing the Game, you agree to these Terms of Service.
               </p>
-              <h4 className="text-sm font-bold text-[#00f5ff]">1. Acceptable Use</h4>
+
+              <h4 className="text-sm font-bold text-[#00f5ff]">1. Acceptable Use &amp; Fair Play</h4>
               <ul className="list-disc pl-5 space-y-1 text-[#a59ecc]">
                 <li>Play for lawful, personal entertainment purposes.</li>
-                <li>Do not attempt to disrupt, hack, cheat, or exploit the game or server infrastructure.</li>
+                <li>Do not attempt to disrupt, hack, cheat, tamper with scores, or exploit the game or server infrastructure.</li>
                 <li>No automated bots or answer-scraping scripts.</li>
               </ul>
 
               <h4 className="text-sm font-bold text-[#00f5ff]">2. Disclaimer &amp; Trademarks</h4>
               <p className="text-[#a59ecc]">
-                The Game is a fan-made project and is not affiliated with, endorsed by, or sponsored by Discord Inc. &quot;Discord&quot; is a registered trademark of Discord Inc.
+                The Game is an independent project by Walusimbi Leon and is not affiliated with, endorsed by, or sponsored by Discord Inc. &quot;Discord&quot; is a registered trademark of Discord Inc.
               </p>
             </>
           )}
+
+          <div className="pt-2 border-t border-[#3b2568]/60 text-[#a59ecc] space-y-1">
+            <p>
+              <strong className="text-white">Email:</strong>{' '}
+              <a href="mailto:walusimbileon2@gmail.com" className="text-[#38bdf8] hover:underline">
+                walusimbileon2@gmail.com
+              </a>
+            </p>
+            <p>
+              <strong className="text-white">GitHub:</strong>{' '}
+              <a
+                href="https://github.com/Walusimbi-Leon"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[#38bdf8] hover:underline"
+              >
+                https://github.com/Walusimbi-Leon
+              </a>
+            </p>
+          </div>
         </div>
 
         {/* Footer */}
-        <div className="p-3 border-t border-[#3b2568]/80 bg-[#12072c] flex justify-end">
+        <div className="p-3 border-t border-[#3b2568]/80 bg-[#12072c] flex items-center justify-between gap-3">
+          <a
+            href={type === 'privacy' ? '/privacy' : '/terms'}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs font-semibold text-[#38bdf8] hover:underline flex items-center gap-1"
+          >
+            <span>Open full page</span>
+            <ExternalLink size={12} />
+          </a>
           <button
             onClick={onClose}
             className="px-4 py-1.5 rounded-lg bg-[#7c5cff] hover:bg-[#6b47ff] text-xs font-bold text-white transition-colors cursor-pointer"
@@ -92,4 +122,3 @@ export const LegalModal: React.FC<LegalModalProps> = ({ type, onClose }) => {
     </div>
   );
 };
-
