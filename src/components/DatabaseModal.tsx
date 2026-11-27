@@ -20,7 +20,6 @@ interface DbStatus {
   }>;
   firebaseStatus: {
     targetConfigured: boolean;
-    targetUrl: string;
   };
 }
 
@@ -152,10 +151,7 @@ export const DatabaseModal: React.FC<DatabaseModalProps> = ({ isOpen, onClose })
                 <span className="w-2 h-2 rounded-full bg-[#2ecc71] animate-pulse" />
               </div>
               <p className="text-[#9aa0c0] leading-relaxed">
-                Project ID: <strong className="text-white">studio-3101124565-bd63c</strong>
-                <br />
-                URL: <code className="text-[#4fc3f7] bg-black/30 px-1 py-0.5 rounded">https://studio-3101124565-bd63c-default-rtdb.firebaseio.com</code>
-                <br />
+                Configured securely via encrypted Worker &amp; server environment secrets.<br />
                 All <strong>1,912 players</strong>, high scores, and trivia questions are migrated and connected with your database secret. Returning Discord users immediately resume their profile and points!
               </p>
             </div>

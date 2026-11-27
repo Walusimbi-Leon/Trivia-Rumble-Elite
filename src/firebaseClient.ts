@@ -1,17 +1,21 @@
 /**
  * Firebase Realtime Database Data Client for Trivia Rumble Elite
- * 
- * Works through the same-origin `/firebase` proxy to bypass Discord Activity
- * iframe sandbox restrictions and rate limits.
+ *
+ * Works through the same-origin `/firebase` proxy to keep database URLs,
+ * secrets, and Discord Activity sandbox requests completely server-side.
  */
 
 const FB_BASE = '/firebase';
-const NS = 'studio-3101124565-bd63c-default-rtdb';
 
 function buildUrl(path: string): string {
   const cleanPath = path.replace(/^\/+/, '');
-  const sep = cleanPath.includes('?') ? '&' : '?';
-  return `${FB_BASE}/${cleanPath}.json${sep}ns=${NS}`;
+  const qIndex = cleanPath.indexOf('?');
+  if (qIndex >= 0) {
+    const pathname = cleanPath.slice(0, qIndex);
+    const query = cleanPath.slice(qIndex + 1);
+    return `${FB_BASE}/${pathname}.json?${query}`;
+  }
+  return `${FB_BASE}/${cleanPath}.json`;
 }
 
 async function fbRequest<T>(path: string, method: string, body?: unknown): Promise<T | null> {

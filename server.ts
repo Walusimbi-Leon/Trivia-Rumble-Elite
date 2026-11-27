@@ -79,9 +79,9 @@ const DEFAULT_QUESTIONS: QuestionRecord[] = [
 ];
 
 // ── Firebase Configuration ───────────────────────────────────────────────────
-const FIREBASE_RTDB_URL = (process.env.FIREBASE_RTDB_URL || 'https://studio-3101124565-bd63c-default-rtdb.firebaseio.com').replace(/\/+$/, '');
-const FIREBASE_DB_SECRET = process.env.FIREBASE_DB_SECRET || 'V6BCS2vL24IlYodAvZ6t6h5fbBYJEOdBM8JYUI30';
-const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'studio-3101124565-bd63c';
+const FIREBASE_RTDB_URL = (process.env.FIREBASE_RTDB_URL || '').replace(/\/+$/, '');
+const FIREBASE_DB_SECRET = (process.env.FIREBASE_DB_SECRET || '').trim();
+const FIREBASE_PROJECT_ID = (process.env.FIREBASE_PROJECT_ID || '').trim();
 
 let bank: QuestionRecord[] = [];
 
@@ -141,6 +141,7 @@ async function appendQuestionsToBank(newQuestions: TriviaQuestion[]): Promise<{ 
   if (!newQuestions.length) return { added: 0, totalBankLen: bank.length };
 
   let nextIndex = bank.length;
+  if (FIREBASE_RTDB_URL && FIREBASE_DB_SECRET) {
   try {
     const shallowRes = await fetch(`${FIREBASE_RTDB_URL}/trivia/global/bank.json?shallow=true&auth=${FIREBASE_DB_SECRET}`);
     if (shallowRes.ok) {
@@ -155,6 +156,7 @@ async function appendQuestionsToBank(newQuestions: TriviaQuestion[]): Promise<{ 
   } catch (err) {
     console.warn('[Bank Append] Shallow check warning, using local next index:', err);
   }
+  }
 
   // Write in chunks of 50 to avoid payload limits
   const CHUNK_SIZE = 50;
@@ -165,6 +167,7 @@ async function appendQuestionsToBank(newQuestions: TriviaQuestion[]): Promise<{ 
       chunkObj[String(nextIndex + i + idx)] = q;
     });
 
+    if (FIREBASE_RTDB_URL && FIREBASE_DB_SECRET) {
     try {
       const patchRes = await fetch(`${FIREBASE_RTDB_URL}/trivia/global/bank.json?auth=${FIREBASE_DB_SECRET}`, {
         method: 'PATCH',
@@ -177,6 +180,7 @@ async function appendQuestionsToBank(newQuestions: TriviaQuestion[]): Promise<{ 
       }
     } catch (e) {
       console.error(`[Bank Append] Network error on chunk at ${i}:`, e);
+    }
     }
   }
 
@@ -196,6 +200,7 @@ async function appendQuestionsToBank(newQuestions: TriviaQuestion[]): Promise<{ 
   }
 
   // Update Firebase game bankLen
+  if (FIREBASE_RTDB_URL && FIREBASE_DB_SECRET) {
   try {
     await fetch(`${FIREBASE_RTDB_URL}/trivia/global/game.json?auth=${FIREBASE_DB_SECRET}`, {
       method: 'PATCH',
@@ -204,6 +209,7 @@ async function appendQuestionsToBank(newQuestions: TriviaQuestion[]): Promise<{ 
     });
   } catch (e) {
     /* ignore */
+  }
   }
 
   console.log(`[Bank Append] Added ${newQuestions.length} questions. Bank now has ${totalCount} questions!`);
@@ -407,10 +413,8 @@ app.get('/api/database/status', (_req: Request, res: Response) => {
       platform: p.platform,
     })),
     firebaseStatus: {
-      targetConfigured: true,
-      targetUrl: FIREBASE_RTDB_URL,
-      projectId: FIREBASE_PROJECT_ID,
-      isLiveConnected: true,
+      targetConfigured: Boolean(FIREBASE_RTDB_URL && FIREBASE_DB_SECRET),
+      isLiveConnected: Boolean(FIREBASE_RTDB_URL && FIREBASE_DB_SECRET),
     },
   });
 });
@@ -479,18 +483,34 @@ app.all('/firebase/*', async (req: Request, res: Response) => {
     }
   }
 
+  const isAllowedRead =
+    method === 'GET' &&
+    (rawPath === 'trivia/global/bank' ||
+      rawPath === 'trivia/global/game' ||
+      rawPath === 'trivia/global/players' ||
+      /^trivia\/global\/players\/[^/]+$/.test(rawPath) ||
+      /^trivia\/global\/answers\/\d+$/.test(rawPath));
+
+  const isAllowedWrite =
+    (method === 'PUT' || method === 'PATCH') &&
+    (/^trivia\/global\/players\/[^/]+$/.test(rawPath) ||
+      /^trivia\/global\/answers\/\d+\/[^/]+$/.test(rawPath));
+
+  if (!isAllowedRead && !isAllowedWrite) {
+    return res.status(403).json({ error: 'Forbidden Firebase operation' });
+  }
+
   const upstreamBase = FIREBASE_RTDB_URL;
-  if (upstreamBase) {
+  if (upstreamBase && FIREBASE_DB_SECRET) {
     try {
       const subPath = req.path.replace(/^\/firebase\//, '');
 
-      // Extract query params, delete old ns, append auth secret
+      // Extract query params, delete old ns/auth, append server auth secret
       const queryIdx = req.url.indexOf('?');
       const searchParams = new URLSearchParams(queryIdx >= 0 ? req.url.slice(queryIdx + 1) : '');
       searchParams.delete('ns');
-      if (FIREBASE_DB_SECRET && !searchParams.has('auth')) {
-        searchParams.set('auth', FIREBASE_DB_SECRET);
-      }
+      searchParams.delete('auth');
+      searchParams.set('auth', FIREBASE_DB_SECRET);
       if ((searchParams.has('limitToLast') || searchParams.has('limitToFirst')) && !searchParams.has('orderBy')) {
         searchParams.set('orderBy', '"$key"');
       }
@@ -499,7 +519,7 @@ app.all('/firebase/*', async (req: Request, res: Response) => {
       const target = `${upstreamBase}/${subPath}${qs ? '?' + qs : ''}`;
 
       // Only pass body and Content-Type for methods that accept a body (NOT GET or HEAD)
-      const isBodyMethod = method !== 'GET' && method !== 'HEAD';
+      const isBodyMethod = isAllowedWrite;
       const hasBody = isBodyMethod && req.body && Object.keys(req.body).length > 0;
 
       const upstreamRes = await fetch(target, {
@@ -588,7 +608,6 @@ app.get('/api/admin/ai-status', (_req: Request, res: Response) => {
   res.json({
     bankLength: bank.length,
     status: aiStatus,
-    targetFirebase: FIREBASE_RTDB_URL,
     configuredKey: true,
   });
 });
@@ -613,6 +632,7 @@ app.post('/api/admin/generate-questions', (req: Request, res: Response) => {
 
 // ── Development & Production Integration ─────────────────────────────────────
 async function syncBankFromFirebase() {
+  if (!FIREBASE_RTDB_URL || !FIREBASE_DB_SECRET) return;
   try {
     const res = await fetch(`${FIREBASE_RTDB_URL}/trivia/global/bank.json?auth=${FIREBASE_DB_SECRET}`);
     if (res.ok) {

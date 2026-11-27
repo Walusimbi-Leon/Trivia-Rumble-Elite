@@ -5,8 +5,11 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const FIREBASE_RTDB_URL = 'https://studio-3101124565-bd63c-default-rtdb.firebaseio.com';
-const FIREBASE_DB_SECRET = 'V6BCS2vL24IlYodAvZ6t6h5fbBYJEOdBM8JYUI30';
+const FIREBASE_RTDB_URL = (process.env.FIREBASE_RTDB_URL || '').replace(/\/+$/, '');
+const FIREBASE_DB_SECRET = process.env.FIREBASE_DB_SECRET || '';
+if (!FIREBASE_RTDB_URL || !FIREBASE_DB_SECRET) {
+  throw new Error('FIREBASE_RTDB_URL and FIREBASE_DB_SECRET environment variables are required.');
+}
 const BANK_BACKUP_PATH = path.join(__dirname, '..', 'src', 'data', 'initial_bank.json');
 
 function decodeHtml(html) {

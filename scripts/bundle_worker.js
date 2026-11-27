@@ -49,8 +49,6 @@ if (fs.existsSync(bankPath)) {
 const workerSource = `// ── TRIVIA RUMBLE ELITE: CLOUDFLARE WORKER ──────────────────────────────────
 // High-performance V8 edge isolate game engine for Discord Activities & Browser
 
-const FIREBASE_RTDB_DEFAULT = "https://studio-3101124565-bd63c-default-rtdb.firebaseio.com";
-const FIREBASE_SECRET_DEFAULT = "V6BCS2vL24IlYodAvZ6t6h5fbBYJEOdBM8JYUI30";
 const SUPPORT_REDIRECT_URL = "https://donate-to-sgss.pages.dev";
 const DEFAULT_DISCORD_CLIENT_ID = "1535428947624460328";
 const SLOT_DURATION = 20000; // 20s per question
@@ -220,58 +218,73 @@ export default {
           status: "healthy",
           engine: "Cloudflare Workers V8 Isolate",
           totalStarterQuestions: STARTER_BANK.length,
-          firebaseTarget: env?.FIREBASE_RTDB_URL || FIREBASE_RTDB_DEFAULT,
+          firebaseConfigured: Boolean(env?.FIREBASE_RTDB_URL && env?.FIREBASE_DB_SECRET),
           timestamp: Date.now(),
         });
       }
 
-      // 6. Firebase REST Proxy
+      // 6. Firebase REST Proxy (uses encrypted Worker secrets + enforces strict path/method rules)
       if (path.startsWith("/firebase/")) {
-        const upstreamBase = (env?.FIREBASE_RTDB_URL || FIREBASE_RTDB_DEFAULT).replace(/\\/+$/, "");
-        const secret = env?.FIREBASE_DB_SECRET || FIREBASE_SECRET_DEFAULT;
+        const upstreamBase = String(env?.FIREBASE_RTDB_URL || "").replace(/\\/+$/, "");
+        const secret = String(env?.FIREBASE_DB_SECRET || "").trim();
         const subPath = path.replace(/^\\/firebase\\//, "");
+        const cleanRaw = subPath.replace(/\\.json$/, "");
         const effectiveMethod = (request.headers.get("x-fb-method") || method).toUpperCase();
 
-        // Query parameters
-        const searchParams = new URLSearchParams(url.search);
-        searchParams.delete("ns");
-        if (secret && !searchParams.has("auth")) {
-          searchParams.set("auth", secret);
-        }
-        if ((searchParams.has("limitToLast") || searchParams.has("limitToFirst")) && !searchParams.has("orderBy")) {
-          searchParams.set("orderBy", '"$key"');
+        const isAllowedRead =
+          effectiveMethod === "GET" &&
+          (cleanRaw === "trivia/global/bank" ||
+            cleanRaw === "trivia/global/game" ||
+            cleanRaw === "trivia/global/players" ||
+            /^trivia\\/global\\/players\\/[^/]+$/.test(cleanRaw) ||
+            /^trivia\\/global\\/answers\\/\\d+$/.test(cleanRaw));
+
+        const isAllowedWrite =
+          (effectiveMethod === "PUT" || effectiveMethod === "PATCH") &&
+          (/^trivia\\/global\\/players\\/[^/]+$/.test(cleanRaw) ||
+            /^trivia\\/global\\/answers\\/\\d+\\/[^/]+$/.test(cleanRaw));
+
+        if (!isAllowedRead && !isAllowedWrite) {
+          return json({ error: "Forbidden Firebase operation" }, 403);
         }
 
-        const target = \`\${upstreamBase}/\${subPath}\${searchParams.toString() ? "?" + searchParams.toString() : ""}\`;
-
-        // Attempt upstream fetch
         let reqBody = null;
         if (effectiveMethod !== "GET" && effectiveMethod !== "HEAD") {
           reqBody = await request.text();
         }
-        try {
-          const upstreamRes = await fetch(target, {
-            method: effectiveMethod,
-            headers: reqBody ? { "Content-Type": "application/json" } : undefined,
-            body: reqBody || undefined,
-          });
-          if (upstreamRes.ok) {
-            const data = await upstreamRes.text();
-            return new Response(data, {
-              status: upstreamRes.status,
-              headers: {
-                "Content-Type": "application/json; charset=utf-8",
-                "Access-Control-Allow-Origin": "*",
-                "Cache-Control": "no-store",
-              },
-            });
-          }
-        } catch (e) {
-          console.warn("[Firebase Proxy] Upstream unreachable, using edge fallback:", e.message);
-        }
 
-        // Local Edge Fallback for offline resilience
-        const cleanRaw = subPath.replace(/\\.json$/, "");
+        if (upstreamBase && secret) {
+          const searchParams = new URLSearchParams(url.search);
+          searchParams.delete("ns");
+          searchParams.delete("auth");
+          searchParams.set("auth", secret);
+          if ((searchParams.has("limitToLast") || searchParams.has("limitToFirst")) && !searchParams.has("orderBy")) {
+            searchParams.set("orderBy", '"$key"');
+          }
+
+          const target = \`\${upstreamBase}/\${subPath}\${searchParams.toString() ? "?" + searchParams.toString() : ""}\`;
+
+          try {
+            const upstreamRes = await fetch(target, {
+              method: effectiveMethod,
+              headers: reqBody ? { "Content-Type": "application/json" } : undefined,
+              body: reqBody || undefined,
+            });
+            if (upstreamRes.ok) {
+              const data = await upstreamRes.text();
+              return new Response(data, {
+                status: upstreamRes.status,
+                headers: {
+                  "Content-Type": "application/json; charset=utf-8",
+                  "Access-Control-Allow-Origin": "*",
+                  "Cache-Control": "no-store",
+                },
+              });
+            }
+          } catch (e) {
+            console.warn("[Firebase Proxy] Upstream unreachable, using edge fallback:", e.message);
+          }
+        }
 
         if (cleanRaw === "trivia/global/bank") {
           return json(STARTER_BANK);
