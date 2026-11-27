@@ -3,7 +3,6 @@ import fs from 'fs';
 import crypto from 'crypto';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { generateTriviaBatch, TriviaQuestion } from './src/services/geminiTrivia';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -230,198 +229,6 @@ const getGameState = () => ({
   slotDuration: SLOT_DURATION,
   startedAt: ROOM_START_TIME,
 });
-
-// ── Gemini AI Daily Trivia Question Pipeline (Free Tier) ─────────────────────
-interface AiGenerationStatus {
-  isGenerating: boolean;
-  totalAddedByAi: number;
-  lastRunAt: number | null;
-  nextScheduledRun: number | null;
-  lastBatchCount: number;
-  lastError: string | null;
-  currentProgress?: { currentBatch: number; totalBatches: number; generatedCount: number };
-}
-
-const aiStatus: AiGenerationStatus = {
-  isGenerating: false,
-  totalAddedByAi: 0,
-  lastRunAt: null,
-  nextScheduledRun: null,
-  lastBatchCount: 0,
-  lastError: null,
-};
-
-async function appendQuestionsToBank(newQuestions: TriviaQuestion[]): Promise<{ added: number; totalBankLen: number }> {
-  if (!newQuestions.length) return { added: 0, totalBankLen: bank.length };
-
-  let nextIndex = bank.length;
-  if (isFirebaseConfigured()) {
-  try {
-    const reqInfo = await buildFirebaseRequest('trivia/global/bank.json?shallow=true');
-    const shallowRes = await fetch(reqInfo.url, { headers: reqInfo.authHeader ? { Authorization: reqInfo.authHeader } : undefined });
-    if (shallowRes.ok) {
-      const shallowKeys = await shallowRes.json();
-      if (shallowKeys && typeof shallowKeys === 'object') {
-        const numericKeys = Object.keys(shallowKeys).map(Number).filter((n) => !isNaN(n));
-        if (numericKeys.length > 0) {
-          nextIndex = Math.max(...numericKeys) + 1;
-        }
-      }
-    }
-  } catch (err) {
-    console.warn('[Bank Append] Shallow check warning, using local next index:', err);
-  }
-  }
-
-  // Write in chunks of 50 to avoid payload limits
-  const CHUNK_SIZE = 50;
-  for (let i = 0; i < newQuestions.length; i += CHUNK_SIZE) {
-    const slice = newQuestions.slice(i, i + CHUNK_SIZE);
-    const chunkObj: Record<string, TriviaQuestion> = {};
-    slice.forEach((q, idx) => {
-      chunkObj[String(nextIndex + i + idx)] = q;
-    });
-
-    if (isFirebaseConfigured()) {
-    try {
-      const reqInfo = await buildFirebaseRequest('trivia/global/bank.json');
-      const patchRes = await fetch(reqInfo.url, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', ...(reqInfo.authHeader ? { Authorization: reqInfo.authHeader } : {}) },
-        body: JSON.stringify(chunkObj),
-      });
-
-      if (!patchRes.ok) {
-        console.error(`[Bank Append] Chunk failed at ${i}:`, patchRes.status, await patchRes.text());
-      }
-    } catch (e) {
-      console.error(`[Bank Append] Network error on chunk at ${i}:`, e);
-    }
-    }
-  }
-
-  // Append to in-memory bank
-  bank.push(...newQuestions);
-  const totalCount = nextIndex + newQuestions.length;
-
-  // Save backup to file
-  try {
-    const allDict: Record<string, any> = {};
-    bank.forEach((q, idx) => {
-      allDict[String(idx)] = q;
-    });
-    fs.writeFileSync(BANK_BACKUP_PATH, JSON.stringify(allDict, null, 2));
-  } catch (e) {
-    console.warn('[Bank Backup] Save warning:', e);
-  }
-
-  // Update Firebase game bankLen
-  if (isFirebaseConfigured()) {
-  try {
-    const reqInfo = await buildFirebaseRequest('trivia/global/game.json');
-    await fetch(reqInfo.url, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', ...(reqInfo.authHeader ? { Authorization: reqInfo.authHeader } : {}) },
-      body: JSON.stringify({ bankLen: totalCount }),
-    });
-  } catch (e) {
-    /* ignore */
-  }
-  }
-
-  console.log(`[Bank Append] Added ${newQuestions.length} questions. Bank now has ${totalCount} questions!`);
-  return { added: newQuestions.length, totalBankLen: totalCount };
-}
-
-async function generateDaily500Questions(targetCount: number = 500) {
-  if (aiStatus.isGenerating) {
-    console.log('[Gemini AI] Question generation already in progress.');
-    return;
-  }
-
-  aiStatus.isGenerating = true;
-  aiStatus.lastError = null;
-  console.log(`[Gemini AI] 🚀 Starting daily generation of ${targetCount} questions via Gemini Free Tier...`);
-
-  const existingTitles = new Set<string>();
-  bank.forEach((q) => {
-    if (q.question) {
-      existingTitles.add(q.question.toLowerCase().replace(/[^a-z0-9]/g, ''));
-    }
-  });
-
-  const BATCH_SIZE = 25;
-  const batchesNeeded = Math.ceil(targetCount / BATCH_SIZE);
-  const generated: TriviaQuestion[] = [];
-
-  try {
-    for (let b = 0; b < batchesNeeded; b++) {
-      const remaining = targetCount - generated.length;
-      if (remaining <= 0) break;
-      const count = Math.min(BATCH_SIZE, remaining);
-
-      aiStatus.currentProgress = {
-        currentBatch: b + 1,
-        totalBatches: batchesNeeded,
-        generatedCount: generated.length,
-      };
-
-      try {
-        console.log(`[Gemini AI] Generating batch ${b + 1}/${batchesNeeded} (${count} questions)...`);
-        const batch = await generateTriviaBatch(count, b, existingTitles);
-
-        batch.forEach((q) => {
-          const norm = q.question.toLowerCase().replace(/[^a-z0-9]/g, '');
-          if (!existingTitles.has(norm)) {
-            existingTitles.add(norm);
-            generated.push(q);
-          }
-        });
-      } catch (batchErr: any) {
-        console.warn(`[Gemini AI] Batch ${b + 1} warning: ${batchErr.message || batchErr}. Continuing...`);
-        await new Promise((r) => setTimeout(r, 3000));
-      }
-
-      // 3 second pause between batches to respect free-tier 15 RPM limits
-      if (b < batchesNeeded - 1 && generated.length < targetCount) {
-        await new Promise((r) => setTimeout(r, 3000));
-      }
-    }
-
-    console.log(`[Gemini AI] Generation complete. Appending ${generated.length} unique questions to Firebase...`);
-    const result = await appendQuestionsToBank(generated);
-
-    aiStatus.totalAddedByAi += generated.length;
-    aiStatus.lastRunAt = Date.now();
-    aiStatus.lastBatchCount = generated.length;
-    aiStatus.currentProgress = undefined;
-    console.log(`[Gemini AI] 🎉 Successfully updated bank to ${result.totalBankLen} questions!`);
-  } catch (err: any) {
-    console.error('[Gemini AI] Error during generation run:', err);
-    aiStatus.lastError = err.message || 'Generation error';
-  } finally {
-    aiStatus.isGenerating = false;
-  }
-}
-
-function scheduleDailyAiGeneration() {
-  const now = new Date();
-  // Scheduled for 00:00 UTC every day
-  const nextRun = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 0));
-  const delayMs = nextRun.getTime() - now.getTime();
-  aiStatus.nextScheduledRun = nextRun.getTime();
-
-  console.log(`[AI Scheduler] Scheduled next daily 500 questions generation in ${Math.round(delayMs / 60000)} minutes (at 00:00 UTC).`);
-
-  setTimeout(async () => {
-    try {
-      await generateDaily500Questions(500);
-    } catch (e) {
-      console.error('[AI Scheduler] Run error:', e);
-    }
-    scheduleDailyAiGeneration();
-  }, delayMs);
-}
 
 // Periodic save of players store to keep data persistent
 setInterval(() => {
@@ -729,33 +536,6 @@ app.all('/firebase/*', async (req: Request, res: Response) => {
   return res.json(null);
 });
 
-// 6. Gemini AI Question Bank Admin & Monitoring Endpoints
-app.get('/api/admin/ai-status', (_req: Request, res: Response) => {
-  res.json({
-    bankLength: bank.length,
-    status: aiStatus,
-    configuredKey: true,
-  });
-});
-
-app.post('/api/admin/generate-questions', (req: Request, res: Response) => {
-  const count = Number(req.body?.count) || 500;
-  if (aiStatus.isGenerating) {
-    return res.status(409).json({ error: 'AI question generation is already in progress.', status: aiStatus });
-  }
-
-  // Launch background generation
-  generateDaily500Questions(count).catch((e) => {
-    console.error('[Admin] Question generation failed:', e);
-  });
-
-  return res.json({
-    success: true,
-    message: `Started generating ${count} new questions via Gemini AI on the free tier.`,
-    status: aiStatus,
-  });
-});
-
 // ── Development & Production Integration ─────────────────────────────────────
 async function syncBankFromFirebase() {
   if (!isFirebaseConfigured()) return;
@@ -802,8 +582,6 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`🎮 Trivia Rumble Elite server running on http://0.0.0.0:${PORT}`);
-    // Start automated daily 500 question generation
-    scheduleDailyAiGeneration();
   });
 }
 
