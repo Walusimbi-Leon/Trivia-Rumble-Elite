@@ -1,14 +1,50 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import crypto from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const FIREBASE_RTDB_URL = (process.env.FIREBASE_RTDB_URL || '').replace(/\/+$/, '');
 const FIREBASE_DB_SECRET = process.env.FIREBASE_DB_SECRET || '';
-if (!FIREBASE_RTDB_URL || !FIREBASE_DB_SECRET) {
-  throw new Error('FIREBASE_RTDB_URL and FIREBASE_DB_SECRET environment variables are required.');
+
+async function getAuthHeadersAndQuery() {
+  const inlineRaw = (process.env.FIREBASE_SERVICE_ACCOUNT_JSON || '').trim();
+  const pathRaw = (process.env.FIREBASE_SERVICE_ACCOUNT_PATH || process.env.GOOGLE_APPLICATION_CREDENTIALS || '').trim();
+  let sa = null;
+  if (inlineRaw) sa = JSON.parse(inlineRaw.startsWith('{') ? inlineRaw : Buffer.from(inlineRaw, 'base64').toString('utf-8'));
+  else if (pathRaw && fs.existsSync(pathRaw)) sa = JSON.parse(fs.readFileSync(pathRaw, 'utf-8'));
+
+  if (sa?.client_email && sa?.private_key) {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const toB64Url = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+    const input = `${toB64Url({ alg: 'RS256', typ: 'JWT' })}.${toB64Url({
+      iss: sa.client_email,
+      scope: 'https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/firebase.database',
+      aud: sa.token_uri || 'https://oauth2.googleapis.com/token',
+      iat: nowSec,
+      exp: nowSec + 3600,
+    })}`;
+    const signer = crypto.createSign('RSA-SHA256');
+    signer.update(input);
+    const assertion = `${input}.${signer.sign(sa.private_key.replace(/\\n/g, '\n'), 'base64url')}`;
+    const r = await fetch(sa.token_uri || 'https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion }).toString(),
+    });
+    const tok = await r.json();
+    if (!tok.access_token) throw new Error('OAuth2 exchange failed for boost script');
+    return { headers: { Authorization: `Bearer ${tok.access_token}` }, authParam: '' };
+  }
+  if (FIREBASE_DB_SECRET) {
+    return { headers: {}, authParam: `auth=${FIREBASE_DB_SECRET}` };
+  }
+  throw new Error('FIREBASE_SERVICE_ACCOUNT_JSON / FIREBASE_SERVICE_ACCOUNT_PATH or FIREBASE_DB_SECRET is required.');
+}
+if (!FIREBASE_RTDB_URL) {
+  throw new Error('FIREBASE_RTDB_URL environment variable is required.');
 }
 const BANK_BACKUP_PATH = path.join(__dirname, '..', 'src', 'data', 'initial_bank.json');
 
@@ -111,7 +147,8 @@ async function main() {
   // Also query Firebase shallow keys to find current next index
   let nextIndex = 7203;
   try {
-    const shallowRes = await fetch(`${FIREBASE_RTDB_URL}/trivia/global/bank.json?shallow=true&auth=${FIREBASE_DB_SECRET}`);
+    const authCfg = await getAuthHeadersAndQuery();
+    const shallowRes = await fetch(`${FIREBASE_RTDB_URL}/trivia/global/bank.json?shallow=true${authCfg.authParam ? '&' + authCfg.authParam : ''}`, { headers: authCfg.headers });
     if (shallowRes.ok) {
       const shallowKeys = await shallowRes.json();
       if (shallowKeys && typeof shallowKeys === 'object') {
@@ -180,9 +217,9 @@ async function main() {
       existingBank[key] = q;
     });
 
-    const patchRes = await fetch(`${FIREBASE_RTDB_URL}/trivia/global/bank.json?auth=${FIREBASE_DB_SECRET}`, {
+    const patchRes = await fetch(`${FIREBASE_RTDB_URL}/trivia/global/bank.json${authCfg.authParam ? '?' + authCfg.authParam : ''}`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...authCfg.headers },
       body: JSON.stringify(chunkObj),
     });
 
@@ -201,9 +238,9 @@ async function main() {
 
   // Update game bankLen in Firebase
   console.log(`Updating trivia/global/game.json (bankLen: ${totalBankLen})...`);
-  await fetch(`${FIREBASE_RTDB_URL}/trivia/global/game.json?auth=${FIREBASE_DB_SECRET}`, {
+  await fetch(`${FIREBASE_RTDB_URL}/trivia/global/game.json${authCfg.authParam ? '?' + authCfg.authParam : ''}`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authCfg.headers },
     body: JSON.stringify({ bankLen: totalBankLen }),
   });
 

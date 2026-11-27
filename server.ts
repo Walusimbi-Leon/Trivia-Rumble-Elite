@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
 import fs from 'fs';
+import crypto from 'crypto';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { generateTriviaBatch, TriviaQuestion } from './src/services/geminiTrivia';
@@ -83,6 +84,119 @@ const FIREBASE_RTDB_URL = (process.env.FIREBASE_RTDB_URL || '').replace(/\/+$/, 
 const FIREBASE_DB_SECRET = (process.env.FIREBASE_DB_SECRET || '').trim();
 const FIREBASE_PROJECT_ID = (process.env.FIREBASE_PROJECT_ID || '').trim();
 
+interface FirebaseServiceAccount {
+  clientEmail: string;
+  privateKey: string;
+  tokenUri: string;
+}
+
+let cachedSaToken: { email: string; accessToken: string; expiresAt: number } | null = null;
+
+function loadServiceAccount(): FirebaseServiceAccount | null {
+  const inlineRaw = (process.env.FIREBASE_SERVICE_ACCOUNT_JSON || '').trim();
+  const pathRaw = (process.env.FIREBASE_SERVICE_ACCOUNT_PATH || process.env.GOOGLE_APPLICATION_CREDENTIALS || '').trim();
+
+  let jsonStr = '';
+  if (inlineRaw) {
+    jsonStr = inlineRaw.startsWith('{') ? inlineRaw : Buffer.from(inlineRaw, 'base64').toString('utf-8');
+  } else if (pathRaw && fs.existsSync(pathRaw)) {
+    jsonStr = fs.readFileSync(pathRaw, 'utf-8');
+  }
+
+  if (jsonStr) {
+    try {
+      const parsed = JSON.parse(jsonStr);
+      if (parsed?.client_email && parsed?.private_key) {
+        return {
+          clientEmail: String(parsed.client_email).trim(),
+          privateKey: String(parsed.private_key).replace(/\\n/g, '\n'),
+          tokenUri: String(parsed.token_uri || 'https://oauth2.googleapis.com/token'),
+        };
+      }
+    } catch (e: any) {
+      console.warn('[Firebase Admin] Failed to parse service account JSON:', e.message);
+    }
+  }
+
+  const email = (process.env.FIREBASE_CLIENT_EMAIL || '').trim();
+  const key = (process.env.FIREBASE_PRIVATE_KEY || '').trim();
+  if (email && key) {
+    return {
+      clientEmail: email,
+      privateKey: key.replace(/\\n/g, '\n'),
+      tokenUri: 'https://oauth2.googleapis.com/token',
+    };
+  }
+  return null;
+}
+
+async function getFirebaseAccessToken(): Promise<string | null> {
+  const sa = loadServiceAccount();
+  if (!sa) return null;
+
+  const nowMs = Date.now();
+  if (cachedSaToken && cachedSaToken.email === sa.clientEmail && nowMs < cachedSaToken.expiresAt - 120000) {
+    return cachedSaToken.accessToken;
+  }
+
+  const nowSec = Math.floor(nowMs / 1000);
+  const toB64Url = (obj: unknown) => Buffer.from(JSON.stringify(obj)).toString('base64url');
+  const signingInput = `${toB64Url({ alg: 'RS256', typ: 'JWT' })}.${toB64Url({
+    iss: sa.clientEmail,
+    scope: 'https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/firebase.database',
+    aud: sa.tokenUri,
+    iat: nowSec,
+    exp: nowSec + 3600,
+  })}`;
+
+  const signer = crypto.createSign('RSA-SHA256');
+  signer.update(signingInput);
+  const signature = signer.sign(sa.privateKey, 'base64url');
+  const assertion = `${signingInput}.${signature}`;
+
+  const resp = await fetch(sa.tokenUri, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion,
+    }).toString(),
+  });
+
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => '');
+    throw new Error(`OAuth2 token error (${resp.status}): ${errText}`);
+  }
+
+  const data = (await resp.json()) as { access_token?: string; expires_in?: number };
+  if (!data.access_token) throw new Error('OAuth2 token missing access_token');
+
+  cachedSaToken = {
+    email: sa.clientEmail,
+    accessToken: data.access_token,
+    expiresAt: Date.now() + (Number(data.expires_in) || 3600) * 1000,
+  };
+  return cachedSaToken.accessToken;
+}
+
+async function buildFirebaseRequest(subUrl: string): Promise<{ url: string; authHeader?: string }> {
+  const oauth = await getFirebaseAccessToken().catch((err) => {
+    console.warn('[Firebase Admin] Token error:', err.message);
+    return null;
+  });
+  if (oauth) {
+    return { url: `${FIREBASE_RTDB_URL}/${subUrl.replace(/^\/+/, '')}`, authHeader: `Bearer ${oauth}` };
+  }
+  const sep = subUrl.includes('?') ? '&' : '?';
+  return {
+    url: `${FIREBASE_RTDB_URL}/${subUrl.replace(/^\/+/, '')}${FIREBASE_DB_SECRET ? `${sep}auth=${FIREBASE_DB_SECRET}` : ''}`,
+  };
+}
+
+function isFirebaseConfigured(): boolean {
+  return Boolean(FIREBASE_RTDB_URL && (loadServiceAccount() || FIREBASE_DB_SECRET));
+}
+
 let bank: QuestionRecord[] = [];
 
 // Load bank sample if available, combined with default bank
@@ -141,9 +255,10 @@ async function appendQuestionsToBank(newQuestions: TriviaQuestion[]): Promise<{ 
   if (!newQuestions.length) return { added: 0, totalBankLen: bank.length };
 
   let nextIndex = bank.length;
-  if (FIREBASE_RTDB_URL && FIREBASE_DB_SECRET) {
+  if (isFirebaseConfigured()) {
   try {
-    const shallowRes = await fetch(`${FIREBASE_RTDB_URL}/trivia/global/bank.json?shallow=true&auth=${FIREBASE_DB_SECRET}`);
+    const reqInfo = await buildFirebaseRequest('trivia/global/bank.json?shallow=true');
+    const shallowRes = await fetch(reqInfo.url, { headers: reqInfo.authHeader ? { Authorization: reqInfo.authHeader } : undefined });
     if (shallowRes.ok) {
       const shallowKeys = await shallowRes.json();
       if (shallowKeys && typeof shallowKeys === 'object') {
@@ -167,11 +282,12 @@ async function appendQuestionsToBank(newQuestions: TriviaQuestion[]): Promise<{ 
       chunkObj[String(nextIndex + i + idx)] = q;
     });
 
-    if (FIREBASE_RTDB_URL && FIREBASE_DB_SECRET) {
+    if (isFirebaseConfigured()) {
     try {
-      const patchRes = await fetch(`${FIREBASE_RTDB_URL}/trivia/global/bank.json?auth=${FIREBASE_DB_SECRET}`, {
+      const reqInfo = await buildFirebaseRequest('trivia/global/bank.json');
+      const patchRes = await fetch(reqInfo.url, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(reqInfo.authHeader ? { Authorization: reqInfo.authHeader } : {}) },
         body: JSON.stringify(chunkObj),
       });
 
@@ -200,11 +316,12 @@ async function appendQuestionsToBank(newQuestions: TriviaQuestion[]): Promise<{ 
   }
 
   // Update Firebase game bankLen
-  if (FIREBASE_RTDB_URL && FIREBASE_DB_SECRET) {
+  if (isFirebaseConfigured()) {
   try {
-    await fetch(`${FIREBASE_RTDB_URL}/trivia/global/game.json?auth=${FIREBASE_DB_SECRET}`, {
+    const reqInfo = await buildFirebaseRequest('trivia/global/game.json');
+    await fetch(reqInfo.url, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(reqInfo.authHeader ? { Authorization: reqInfo.authHeader } : {}) },
       body: JSON.stringify({ bankLen: totalCount }),
     });
   } catch (e) {
@@ -413,8 +530,9 @@ app.get('/api/database/status', (_req: Request, res: Response) => {
       platform: p.platform,
     })),
     firebaseStatus: {
-      targetConfigured: Boolean(FIREBASE_RTDB_URL && FIREBASE_DB_SECRET),
-      isLiveConnected: Boolean(FIREBASE_RTDB_URL && FIREBASE_DB_SECRET),
+      targetConfigured: isFirebaseConfigured(),
+      isLiveConnected: isFirebaseConfigured(),
+      authMode: loadServiceAccount() ? 'service_account_oauth2' : (FIREBASE_DB_SECRET ? 'legacy_secret' : 'none'),
     },
   });
 });
@@ -500,33 +618,41 @@ app.all('/firebase/*', async (req: Request, res: Response) => {
     return res.status(403).json({ error: 'Forbidden Firebase operation' });
   }
 
-  const upstreamBase = FIREBASE_RTDB_URL;
-  if (upstreamBase && FIREBASE_DB_SECRET) {
+  if (isFirebaseConfigured()) {
     try {
       const subPath = req.path.replace(/^\/firebase\//, '');
+      const oauthToken = await getFirebaseAccessToken().catch(() => null);
 
-      // Extract query params, delete old ns/auth, append server auth secret
       const queryIdx = req.url.indexOf('?');
       const searchParams = new URLSearchParams(queryIdx >= 0 ? req.url.slice(queryIdx + 1) : '');
       searchParams.delete('ns');
       searchParams.delete('auth');
-      searchParams.set('auth', FIREBASE_DB_SECRET);
+      searchParams.delete('access_token');
+      if (!oauthToken && FIREBASE_DB_SECRET) {
+        searchParams.set('auth', FIREBASE_DB_SECRET);
+      }
       if ((searchParams.has('limitToLast') || searchParams.has('limitToFirst')) && !searchParams.has('orderBy')) {
         searchParams.set('orderBy', '"$key"');
       }
 
       const qs = searchParams.toString();
-      const target = `${upstreamBase}/${subPath}${qs ? '?' + qs : ''}`;
+      const target = `${FIREBASE_RTDB_URL}/${subPath}${qs ? '?' + qs : ''}`;
 
-      // Only pass body and Content-Type for methods that accept a body (NOT GET or HEAD)
       const isBodyMethod = isAllowedWrite;
       const hasBody = isBodyMethod && req.body && Object.keys(req.body).length > 0;
+      const headers: Record<string, string> = {};
+      if (hasBody) headers['Content-Type'] = 'application/json';
+      if (oauthToken) headers['Authorization'] = `Bearer ${oauthToken}`;
 
       const upstreamRes = await fetch(target, {
         method,
-        headers: hasBody ? { 'Content-Type': 'application/json' } : undefined,
+        headers: Object.keys(headers).length ? headers : undefined,
         body: hasBody ? JSON.stringify(req.body) : undefined,
       });
+
+      if (upstreamRes.status === 401 || upstreamRes.status === 403) {
+        cachedSaToken = null;
+      }
 
       const data = await upstreamRes.text();
       return res.status(upstreamRes.status).send(data);
@@ -632,9 +758,10 @@ app.post('/api/admin/generate-questions', (req: Request, res: Response) => {
 
 // ── Development & Production Integration ─────────────────────────────────────
 async function syncBankFromFirebase() {
-  if (!FIREBASE_RTDB_URL || !FIREBASE_DB_SECRET) return;
+  if (!isFirebaseConfigured()) return;
   try {
-    const res = await fetch(`${FIREBASE_RTDB_URL}/trivia/global/bank.json?auth=${FIREBASE_DB_SECRET}`);
+    const reqInfo = await buildFirebaseRequest('trivia/global/bank.json');
+    const res = await fetch(reqInfo.url, { headers: reqInfo.authHeader ? { Authorization: reqInfo.authHeader } : undefined });
     if (res.ok) {
       const data = await res.json();
       if (data && typeof data === 'object') {

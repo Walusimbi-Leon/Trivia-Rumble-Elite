@@ -3,8 +3,9 @@ main = "dist/worker.js"
 compatibility_date = "2026-09-01"
 compatibility_flags = ["nodejs_compat"]
 
-# Sensitive Firebase configuration (FIREBASE_RTDB_URL, FIREBASE_DB_SECRET,
-# FIREBASE_PROJECT_ID) and DISCORD_CLIENT_SECRET must be set as encrypted
-# Cloudflare Worker secrets (wrangler secret put), never in wrangler.toml.
+# Sensitive Firebase Admin SDK secrets (FIREBASE_SERVICE_ACCOUNT_JSON, FIREBASE_RTDB_URL,
+# FIREBASE_PROJECT_ID) and DISCORD_CLIENT_SECRET must be stored as encrypted Cloudflare
+# Worker Secrets (`wrangler secret put` or Cloudflare Dashboard -> Variables and Secrets),
+# never committed to wrangler.toml.
 [vars]
 SUPPORT_URL = "https://donate-to-sgss.pages.dev"

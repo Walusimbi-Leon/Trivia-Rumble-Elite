@@ -62,6 +62,124 @@ const ASSETS = ${JSON.stringify(assets)};
 // Inlined starter questions
 const STARTER_BANK = ${JSON.stringify(starterBank)};
 
+// In-Memory Cached Google OAuth2 Token (for Firebase Admin Service Account auth)
+let cachedGoogleToken = null;
+
+function toBase64Url(input) {
+  const bytes = typeof input === "string" ? new TextEncoder().encode(input) : new Uint8Array(input);
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary).replace(/\\+/g, "-").replace(/\\//g, "_").replace(/=+$/, "");
+}
+
+function pemToPkcs8Buffer(pem) {
+  const cleaned = String(pem)
+    .replace(/\\\\n/g, "\\n")
+    .replace(/-----BEGIN [^-]+-----/g, "")
+    .replace(/-----END [^-]+-----/g, "")
+    .replace(/\\s+/g, "");
+  const bin = atob(cleaned);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes.buffer;
+}
+
+function parseServiceAccount(env) {
+  const raw = String(env?.FIREBASE_SERVICE_ACCOUNT_JSON || "").trim();
+  if (raw) {
+    try {
+      const jsonStr = raw.startsWith("{") ? raw : atob(raw);
+      const parsed = JSON.parse(jsonStr);
+      if (parsed?.client_email && parsed?.private_key) {
+        return {
+          clientEmail: String(parsed.client_email).trim(),
+          privateKey: String(parsed.private_key),
+          tokenUri: String(parsed.token_uri || "https://oauth2.googleapis.com/token"),
+        };
+      }
+    } catch (e) {
+      console.warn("[Firebase Admin] Failed to parse FIREBASE_SERVICE_ACCOUNT_JSON:", e.message);
+    }
+  }
+  const email = String(env?.FIREBASE_CLIENT_EMAIL || "").trim();
+  const key = String(env?.FIREBASE_PRIVATE_KEY || "").trim();
+  if (email && key) {
+    return {
+      clientEmail: email,
+      privateKey: key,
+      tokenUri: "https://oauth2.googleapis.com/token",
+    };
+  }
+  return null;
+}
+
+async function getFirebaseAccessToken(env) {
+  const sa = parseServiceAccount(env);
+  if (!sa) return null;
+
+  const nowMs = Date.now();
+  if (cachedGoogleToken && cachedGoogleToken.email === sa.clientEmail && nowMs < cachedGoogleToken.expiresAt - 120000) {
+    return cachedGoogleToken.accessToken;
+  }
+
+  const nowSec = Math.floor(nowMs / 1000);
+  const headerB64 = toBase64Url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
+  const payloadB64 = toBase64Url(
+    JSON.stringify({
+      iss: sa.clientEmail,
+      scope: "https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/firebase.database",
+      aud: sa.tokenUri,
+      iat: nowSec,
+      exp: nowSec + 3600,
+    })
+  );
+  const signingInput = headerB64 + "." + payloadB64;
+
+  const cryptoKey = await crypto.subtle.importKey(
+    "pkcs8",
+    pemToPkcs8Buffer(sa.privateKey),
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+
+  const sigBuf = await crypto.subtle.sign(
+    "RSASSA-PKCS1-v1_5",
+    cryptoKey,
+    new TextEncoder().encode(signingInput)
+  );
+  const assertion = signingInput + "." + toBase64Url(sigBuf);
+
+  const tokenResp = await fetch(sa.tokenUri, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion,
+    }).toString(),
+  });
+
+  if (!tokenResp.ok) {
+    const errTxt = await tokenResp.text().catch(() => "");
+    throw new Error("OAuth2 token error (" + tokenResp.status + "): " + errTxt);
+  }
+
+  const tokenData = await tokenResp.json();
+  if (!tokenData?.access_token) {
+    throw new Error("OAuth2 response missing access_token");
+  }
+
+  cachedGoogleToken = {
+    email: sa.clientEmail,
+    accessToken: tokenData.access_token,
+    expiresAt: Date.now() + (Number(tokenData.expires_in) || 3600) * 1000,
+  };
+  return cachedGoogleToken.accessToken;
+}
+
 // In-Memory Fallback Store (for ephemeral state)
 let memoryPlayers = {};
 let memoryAnswers = {};
@@ -218,7 +336,8 @@ export default {
           status: "healthy",
           engine: "Cloudflare Workers V8 Isolate",
           totalStarterQuestions: STARTER_BANK.length,
-          firebaseConfigured: Boolean(env?.FIREBASE_RTDB_URL && env?.FIREBASE_DB_SECRET),
+          firebaseConfigured: Boolean(env?.FIREBASE_RTDB_URL && (parseServiceAccount(env) || env?.FIREBASE_DB_SECRET)),
+          firebaseAuthMode: parseServiceAccount(env) ? "service_account_oauth2" : (env?.FIREBASE_DB_SECRET ? "legacy_secret" : "none"),
           timestamp: Date.now(),
         });
       }
@@ -226,7 +345,7 @@ export default {
       // 6. Firebase REST Proxy (uses encrypted Worker secrets + enforces strict path/method rules)
       if (path.startsWith("/firebase/")) {
         const upstreamBase = String(env?.FIREBASE_RTDB_URL || "").replace(/\\/+$/, "");
-        const secret = String(env?.FIREBASE_DB_SECRET || "").trim();
+        const legacySecret = String(env?.FIREBASE_DB_SECRET || "").trim();
         const subPath = path.replace(/^\\/firebase\\//, "");
         const cleanRaw = subPath.replace(/\\.json$/, "");
         const effectiveMethod = (request.headers.get("x-fb-method") || method).toUpperCase();
@@ -253,23 +372,41 @@ export default {
           reqBody = await request.text();
         }
 
-        if (upstreamBase && secret) {
+        let oauthToken = null;
+        if (upstreamBase) {
+          try {
+            oauthToken = await getFirebaseAccessToken(env);
+          } catch (authErr) {
+            console.warn("[Firebase Admin] OAuth token mint error:", authErr.message);
+          }
+        }
+
+        if (upstreamBase && (oauthToken || legacySecret)) {
           const searchParams = new URLSearchParams(url.search);
           searchParams.delete("ns");
           searchParams.delete("auth");
-          searchParams.set("auth", secret);
+          searchParams.delete("access_token");
+          if (!oauthToken && legacySecret) {
+            searchParams.set("auth", legacySecret);
+          }
           if ((searchParams.has("limitToLast") || searchParams.has("limitToFirst")) && !searchParams.has("orderBy")) {
             searchParams.set("orderBy", '"$key"');
           }
 
           const target = \`\${upstreamBase}/\${subPath}\${searchParams.toString() ? "?" + searchParams.toString() : ""}\`;
+          const headers = {};
+          if (reqBody) headers["Content-Type"] = "application/json";
+          if (oauthToken) headers["Authorization"] = \`Bearer \${oauthToken}\`;
 
           try {
             const upstreamRes = await fetch(target, {
               method: effectiveMethod,
-              headers: reqBody ? { "Content-Type": "application/json" } : undefined,
+              headers: Object.keys(headers).length ? headers : undefined,
               body: reqBody || undefined,
             });
+            if (upstreamRes.status === 401 || upstreamRes.status === 403) {
+              cachedGoogleToken = null;
+            }
             if (upstreamRes.ok) {
               const data = await upstreamRes.text();
               return new Response(data, {
