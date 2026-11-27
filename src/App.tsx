@@ -574,8 +574,8 @@ export default function App() {
       <Header player={me} />
 
       {/* Main Game Container */}
-      <main className="flex-1 w-full max-w-[920px] mx-auto px-4 py-4 md:py-6">
-        <div className="grid grid-cols-1 md:grid-cols-[1fr_280px] gap-4 md:gap-5 items-start">
+      <main className="flex-1 w-full max-w-[1100px] mx-auto px-4 py-4 md:py-6">
+        <div className="grid grid-cols-1 md:grid-cols-[1fr_290px] gap-4 md:gap-6 items-start">
           {/* Main Column: Trivia Arena */}
           <div className="min-w-0">
             {currentSlotInfo ? (

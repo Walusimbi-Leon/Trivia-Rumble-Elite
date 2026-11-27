@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SGSS Trivia Challenge 3D — Standalone Live Demo</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, sans-serif;
+        background: #0a0f1a;
+        color: #f8fafc;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        gap: 16px;
+        padding: 20px;
+        box-sizing: border-box;
+      }
+      #monitor-slot {
+        border-radius: 16px;
+        overflow: hidden;
+        border: 1px solid rgba(103, 232, 249, 0.2);
+      }
+      .bar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 12px 16px;
+        border-radius: 14px;
+        background: #121826;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+      }
+      button {
+        padding: 8px 12px;
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        background: #1e293b;
+        color: #f8fafc;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #334155;
+      }
+      #status {
+        font-size: 13px;
+        color: #7dd3fc;
+      }
+    </style>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.174.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.174.0/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div id="monitor-slot"></div>
+    <div id="status">Click A, B, C, or D directly on the 3D monitor screen!</div>
+    <div class="bar">
+      <button id="m-float">Float</button>
+      <button id="m-pulse">Pulse</button>
+      <button id="m-orbit">Orbit</button>
+      <button id="m-tilt">Tilt</button>
+      <button id="btn-reset">Reset Round</button>
+      <button id="btn-smaller">Make Smaller (-)</button>
+      <button id="btn-bigger">Make Bigger (+)</button>
+    </div>
+
+    <script type="module">
+      import { createTriviaChallenge3DWidget } from './trivia-challenge-3d.js';
+      import { createTriviaChallenge3DSizer } from './trivia-challenge-sizing.js';
+
+      const slot = document.getElementById('monitor-slot');
+      const status = document.getElementById('status');
+
+      const sizer = createTriviaChallenge3DSizer(slot, 'lg');
+      const monitor = createTriviaChallenge3DWidget(slot, {
+        motionMode: 'float',
+        onSelectOption: (ev) => {
+          status.textContent = `Selected ${ev.letter}: ${ev.text} — ${
+            ev.isCorrect ? 'Correct!' : 'Incorrect!'
+          }`;
+        },
+      });
+
+      document.getElementById('m-float').onclick = () => monitor.setMotionMode('float');
+      document.getElementById('m-pulse').onclick = () => monitor.setMotionMode('pulse');
+      document.getElementById('m-orbit').onclick = () => monitor.setMotionMode('orbit');
+      document.getElementById('m-tilt').onclick = () => monitor.setMotionMode('tilt');
+      document.getElementById('btn-reset').onclick = () => {
+        monitor.resetSelection();
+        status.textContent = 'Round reset — pick A, B, C, or D on the 3D monitor!';
+      };
+      document.getElementById('btn-smaller').onclick = () => {
+        const s = sizer.makeSmaller(0.2);
+        status.textContent = `Resized smaller: ${s.width} x ${s.height}px`;
+      };
+      document.getElementById('btn-bigger').onclick = () => {
+        const s = sizer.makeBigger(0.2);
+        status.textContent = `Resized bigger: ${s.width} x ${s.height}px`;
+      };
+    </script>
+  </body>
+</html>
