@@ -22,7 +22,7 @@ export const LegalModal: React.FC<LegalModalProps> = ({ type, onClose }) => {
               <h3 className="text-base font-black text-white">
                 {type === 'privacy' ? 'Privacy Policy' : 'Terms of Service'}
               </h3>
-              <p className="text-xs text-[#a59ecc]">Trivia Rumble Elite · Updated November 27, 2026</p>
+              <p className="text-xs text-[#a59ecc]">Trivia Rumble Elite · Updated May 1, 2026</p>
             </div>
           </div>
           <button
