@@ -13,7 +13,8 @@ import { QuestionCard } from './components/QuestionCard';
 import { Leaderboard } from './components/Leaderboard';
 import { LegalModal } from './components/LegalModal';
 import { SgssIntroVideo } from './sgss-intro-video/SgssIntroVideo';
-import { ArenaIntroVideo } from './arena-intro-video/ArenaIntroVideo';
+import { SupportDeveloper3DWidget } from './support-developer-3d-widget/SupportDeveloper3DWidget';
+import { applySupportDeveloper3DSize } from './support-developer-3d-widget/support-developer-sizing.js';
 import initialBankJson from './data/initial_bank.json';
 
 const SLOT_DURATION = 20000;
@@ -69,12 +70,14 @@ function filterSlotAnswers(
 export default function App() {
   // ── State ──────────────────────────────────────────────────────────────────
   const [loading, setLoading] = useState(true);
-  const [introStage, setIntroStage] = useState<'sgss' | 'arena' | 'done'>('sgss');
+  const [introStage, setIntroStage] = useState<'sgss' | 'done'>('sgss');
   const [leaderboardSynced, setLeaderboardSynced] = useState(false);
   const [monitorReady, setMonitorReady] = useState(false);
-  const [arenaCycleDone, setArenaCycleDone] = useState(false);
-  const [arenaIntroFading, setArenaIntroFading] = useState(false);
-  const arenaCycleDoneRef = useRef(false);
+  const [sgssCycleDone, setSgssCycleDone] = useState(false);
+  const [sgssIntroFading, setSgssIntroFading] = useState(false);
+  const [supportWebglLost, setSupportWebglLost] = useState(false);
+  const sgssCycleDoneRef = useRef(false);
+  const supportSlotRef = useRef<HTMLDivElement | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const [me, setMe] = useState<Player>({
@@ -549,9 +552,9 @@ export default function App() {
     setMonitorReady(true);
   }, []);
 
-  // Re-sync leaderboard & active slot answers cleanly while the Arena Intro Video plays
+  // Re-sync leaderboard & active slot answers in the background while SGSS Intro Video plays
   useEffect(() => {
-    if (introStage !== 'arena' || loading) return;
+    if (introStage !== 'sgss' || loading) return;
     let active = true;
     syncPlayers().finally(() => {
       if (active) setLeaderboardSynced(true);
@@ -561,24 +564,31 @@ export default function App() {
     };
   }, [introStage, loading, syncPlayers]);
 
-  // Safety failsafe if strict autoplay throttles video end callbacks on locked mobile WebViews
+  // Safety failsafe if strict autoplay throttles video progress callbacks on locked WebViews
   useEffect(() => {
-    if (introStage === 'sgss') {
-      const timer = window.setTimeout(() => {
-        setIntroStage((prev) => (prev === 'sgss' ? 'arena' : prev));
-      }, 9000);
-      return () => window.clearTimeout(timer);
-    }
-    if (introStage === 'arena') {
-      const timer = window.setTimeout(() => {
-        if (!arenaCycleDoneRef.current) {
-          arenaCycleDoneRef.current = true;
-          setArenaCycleDone(true);
-        }
-      }, 7500);
-      return () => window.clearTimeout(timer);
-    }
+    if (introStage !== 'sgss') return;
+    const timer = window.setTimeout(() => {
+      if (!sgssCycleDoneRef.current) {
+        sgssCycleDoneRef.current = true;
+        setSgssCycleDone(true);
+      }
+    }, 12500);
+    return () => window.clearTimeout(timer);
   }, [introStage]);
+
+  // Size the 3D Support Developer footer button responsively
+  useEffect(() => {
+    const syncSupportSize = () => {
+      if (!supportSlotRef.current) return;
+      const vw = typeof window !== "undefined" ? window.innerWidth : 1024;
+      const w = vw < 480 ? 136 : 152;
+      const h = vw < 480 ? 76 : 84;
+      applySupportDeveloper3DSize(supportSlotRef.current, { width: w, height: h });
+    };
+    syncSupportSize();
+    window.addEventListener("resize", syncSupportSize);
+    return () => window.removeEventListener("resize", syncSupportSize);
+  }, [supportWebglLost, errorMsg, introStage]);
 
   const appFullyReady =
     !loading &&
@@ -587,40 +597,20 @@ export default function App() {
     leaderboardSynced &&
     monitorReady;
 
-  // Fade out Arena Intro Video only once full setup + leaderboard sync + 3D monitor are ready
+  // Disappear SGSS Intro Video smoothly once full connection, leaderboard sync, and 3D monitor are ready
   useEffect(() => {
-    if (introStage !== 'arena') return;
-    if (!arenaCycleDone) return;
+    if (introStage !== 'sgss') return;
+    if (!sgssCycleDone) return;
     if (!appFullyReady && !errorMsg) return;
-    setArenaIntroFading(true);
+    setSgssIntroFading(true);
     const fadeTimer = window.setTimeout(() => {
       setIntroStage('done');
-      setArenaIntroFading(false);
+      setSgssIntroFading(false);
     }, 460);
     return () => window.clearTimeout(fadeTimer);
-  }, [introStage, arenaCycleDone, appFullyReady, errorMsg]);
+  }, [introStage, sgssCycleDone, appFullyReady, errorMsg]);
 
   // ── Render ─────────────────────────────────────────────────────────────────
-  if (introStage === 'sgss') {
-    return (
-      <div className="fixed inset-0 z-50 bg-[#060911] flex items-center justify-center overflow-hidden">
-        <SgssIntroVideo
-          mp4Src="/sgss-intro-video/assets/sgss-intro.mp4"
-          webmSrc="/sgss-intro-video/assets/sgss-intro.webm"
-          posterSrc="/sgss-intro-video/assets/sgss-intro-poster.jpg"
-          format="fullscreen"
-          focalPoint="monitor"
-          autoPlay={true}
-          muted={true}
-          showSkipButton={false}
-          fadeOutOnEnd={true}
-          onEnded={() => setIntroStage('arena')}
-          className="w-full h-full"
-        />
-      </div>
-    );
-  }
-
   if (introStage === 'done' && errorMsg) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center min-h-[60vh] p-4 text-center">
@@ -645,27 +635,28 @@ export default function App() {
 
   return (
     <>
-      {introStage === 'arena' && (
+      {introStage === 'sgss' && (
         <div
-          className={`fixed inset-0 z-50 bg-[#04060d] flex items-center justify-center overflow-hidden transition-opacity duration-500 ${
-            arenaIntroFading ? 'opacity-0 pointer-events-none' : 'opacity-100'
+          className={`fixed inset-0 z-50 bg-[#060911] flex items-center justify-center overflow-hidden transition-opacity duration-500 ${
+            sgssIntroFading ? 'opacity-0 pointer-events-none' : 'opacity-100'
           }`}
         >
-          <ArenaIntroVideo
-            mp4Src="/arena-intro-video/assets/trivia-rumble-arena-intro.mp4"
-            webmSrc="/arena-intro-video/assets/trivia-rumble-arena-intro.webm"
-            posterSrc="/arena-intro-video/assets/trivia-rumble-arena-poster.jpg"
+          <SgssIntroVideo
+            mp4Src="/sgss-intro-video/assets/sgss-intro.mp4"
+            webmSrc="/sgss-intro-video/assets/sgss-intro.webm"
+            posterSrc="/sgss-intro-video/assets/sgss-intro-poster.jpg"
             format="fullscreen"
-            focalPoint="stack"
+            focalPoint="monitor"
             autoPlay={true}
             loop={true}
             muted={true}
+            playbackRate={0.65}
             showSkipButton={false}
             fadeOutOnEnd={false}
             onTimeUpdate={(ev) => {
-              if (ev.progress >= 0.94 && !arenaCycleDoneRef.current) {
-                arenaCycleDoneRef.current = true;
-                setArenaCycleDone(true);
+              if (ev.progress >= 0.96 && !sgssCycleDoneRef.current) {
+                sgssCycleDoneRef.current = true;
+                setSgssCycleDone(true);
               }
             }}
             className="w-full h-full"
@@ -727,13 +718,41 @@ export default function App() {
           Terms of Service
         </button>
         <span className="text-[#3d446b] select-none">·</span>
-        <button
-          onClick={() => openExternalUrl(SUPPORT_URL)}
-          className="cursor-pointer text-sm font-bold bg-[#ffd166]/15 hover:bg-[#ffd166]/25 border border-[#ffd166]/40 hover:border-[#ffd166]/70 text-[#ffd166] px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 shadow-sm active:scale-95 transition-all"
-        >
-          <span className="text-base">💛</span>
-          <span>Support Developer</span>
-        </button>
+        {!supportWebglLost ? (
+          <div
+            ref={supportSlotRef}
+            role="button"
+            tabIndex={0}
+            aria-label="Support Developer"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                openExternalUrl(SUPPORT_URL);
+              }
+            }}
+            className="cursor-pointer rounded-xl overflow-hidden hover:brightness-110 active:scale-95 transition-transform"
+            style={{ width: '152px', height: '84px' }}
+          >
+            <SupportDeveloper3DWidget
+              motionMode="wave"
+              speed={1.0}
+              intensity={1.0}
+              background="transparent"
+              showStudioFloor={false}
+              enableOrbit={false}
+              enableSoundFeedback={introStage === 'done'}
+              onClick={() => openExternalUrl(SUPPORT_URL)}
+              onContextLost={(lost) => setSupportWebglLost(lost)}
+            />
+          </div>
+        ) : (
+          <button
+            onClick={() => openExternalUrl(SUPPORT_URL)}
+            className="cursor-pointer text-sm font-bold bg-[#ffd166]/15 hover:bg-[#ffd166]/25 border border-[#ffd166]/40 hover:border-[#ffd166]/70 text-[#ffd166] px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 shadow-sm active:scale-95 transition-all"
+          >
+            <span>Support Developer</span>
+          </button>
+        )}
       </footer>
 
       {/* Legal Modal */}

@@ -18,8 +18,8 @@ export const Header: React.FC<HeaderProps> = ({ player }) => {
       const el = logoSlotRef.current;
       if (!el) return;
       const vw = typeof window !== "undefined" ? window.innerWidth : 1024;
-      const width = vw < 480 ? 156 : vw < 640 ? 186 : 230;
-      const height = vw < 480 ? 52 : vw < 640 ? 60 : 72;
+      const width = vw < 480 ? 196 : vw < 768 ? 224 : 252;
+      const height = vw < 480 ? 58 : vw < 768 ? 68 : 74;
       applyTriviaRumbleElite3DSize(el, { width, height });
     };
     syncLogoSize();
@@ -29,14 +29,17 @@ export const Header: React.FC<HeaderProps> = ({ player }) => {
 
   return (
     <header className="sticky top-0 z-30 bg-[#09041a]/85 backdrop-blur-md border-b border-[#3b2568]/60 px-3 sm:px-6 py-1.5 transition-all">
-      <div className="max-w-[1400px] mx-auto flex items-center justify-between gap-2 sm:gap-4">
-        {/* Top-Left Fixed 3D TRIVIA RUMBLE ELITE Emblem */}
-        <div className="flex items-center shrink-0">
+      <div className="max-w-[1400px] mx-auto flex flex-col sm:grid sm:grid-cols-[1fr_auto_1fr] items-center gap-1.5 sm:gap-4">
+        {/* Left Balancer on Desktop/Tablet so 3D Title sits dead-center */}
+        <div className="hidden sm:block" aria-hidden="true" />
+
+        {/* Top-Middle Fixed 3D TRIVIA RUMBLE ELITE Emblem */}
+        <div className="sm:justify-self-center flex items-center justify-center shrink-0">
           {!logoWebglLost ? (
             <div
               ref={logoSlotRef}
               className="rounded-xl overflow-hidden select-none pointer-events-none"
-              style={{ width: "230px", height: "72px" }}
+              style={{ width: "252px", height: "74px" }}
             >
               <TriviaRumbleElite3DWidget
                 motionMode="blaze"
@@ -50,14 +53,14 @@ export const Header: React.FC<HeaderProps> = ({ player }) => {
               />
             </div>
           ) : (
-            <h1 className="text-base sm:text-lg md:text-xl font-black tracking-tight text-white whitespace-nowrap">
+            <h1 className="text-base sm:text-lg md:text-xl font-black tracking-tight text-white whitespace-nowrap text-center">
               TRIVIA RUMBLE <span className="text-[#00f5ff] font-extrabold">ELITE</span>
             </h1>
           )}
         </div>
 
         {/* Right Section: User Profile Chip */}
-        <div className="flex items-center gap-2 bg-[#12092e]/80 border border-[#4a2e80]/80 rounded-full px-3 py-1 shadow-inner">
+        <div className="sm:justify-self-end flex items-center gap-2 bg-[#12092e]/80 border border-[#4a2e80]/80 rounded-full px-3 py-1 shadow-inner">
           {player.avatarUrl ? (
             <img
               src={player.avatarUrl}
@@ -77,7 +80,7 @@ export const Header: React.FC<HeaderProps> = ({ player }) => {
           >
             {initial}
           </div>
-          <span className="text-xs font-bold text-white truncate max-w-[90px] sm:max-w-[160px]">
+          <span className="text-xs font-bold text-white truncate max-w-[110px] sm:max-w-[160px]">
             {player.username}
           </span>
           <span className="text-xs font-black text-[#ffd166] flex items-center gap-1">

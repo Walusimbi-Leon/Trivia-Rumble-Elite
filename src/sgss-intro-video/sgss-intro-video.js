@@ -61,7 +61,9 @@ export function createSgssIntroVideo(container, options = {}) {
   video.loop = Boolean(opts.loop);
   video.controls = Boolean(opts.controls);
   video.volume = Math.max(0, Math.min(1, Number(opts.volume) / 100));
-  video.playbackRate = Math.max(0.25, Math.min(3.0, Number(opts.playbackRate) || 1));
+  const targetRate = Math.max(0.25, Math.min(3.0, Number(opts.playbackRate) || 1));
+  video.defaultPlaybackRate = targetRate;
+  video.playbackRate = targetRate;
 
   if (opts.posterSrc) {
     video.poster = opts.posterSrc;
@@ -145,6 +147,7 @@ export function createSgssIntroVideo(container, options = {}) {
   };
 
   const onLoadedMetadata = () => {
+    video.playbackRate = video.defaultPlaybackRate || targetRate;
     syncFocal();
     if (typeof opts.onReady === 'function') {
       opts.onReady({ duration: video.duration || 6.0 });
@@ -152,6 +155,7 @@ export function createSgssIntroVideo(container, options = {}) {
   };
 
   const onPlayEvent = () => {
+    video.playbackRate = video.defaultPlaybackRate || targetRate;
     endedDispatched = false;
     video.style.opacity = '1';
     cancelAnimationFrame(rafId);
@@ -241,7 +245,9 @@ export function createSgssIntroVideo(container, options = {}) {
       video.loop = Boolean(loop);
     },
     setPlaybackRate: (rate) => {
-      video.playbackRate = Math.max(0.25, Math.min(3.0, Number(rate) || 1));
+      const nextRate = Math.max(0.25, Math.min(3.0, Number(rate) || 1));
+      video.defaultPlaybackRate = nextRate;
+      video.playbackRate = nextRate;
     },
     setFormat: (format) => sizer.setFormat(format),
     setFitMode: (fitMode) => sizer.setFitMode(fitMode),
