@@ -4,6 +4,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 const _vec2 = new THREE.Vector2();
 const _targetScale = new THREE.Vector3();
+const _zoomDir = new THREE.Vector3();
 
 function detectSoftwareWebGL() {
   try {
@@ -543,6 +544,7 @@ export function createTriviaChallenge3DWidget(container, userOptions = {}) {
     background: '#0a0f1a',
     showStudioFloor: true,
     enableOrbit: true,
+    enableRotate: true,
     enableSoundFeedback: true,
     locked: false,
     masterVolume: 70,
@@ -855,9 +857,11 @@ export function createTriviaChallenge3DWidget(container, userOptions = {}) {
     controls.target.copy(DEFAULT_TARGET);
     controls.enableDamping = !isSoftwareGl;
     controls.dampingFactor = 0.06;
+    controls.enableRotate = Boolean(options.enableRotate);
+    controls.enableZoom = true;
     controls.enablePan = false;
-    controls.minDistance = 4.0;
-    controls.maxDistance = 12.0;
+    controls.minDistance = 3.4;
+    controls.maxDistance = 10.8;
     controls.minPolarAngle = Math.PI * 0.22;
     controls.maxPolarAngle = Math.PI * 0.72;
     controls.update();
@@ -872,6 +876,7 @@ export function createTriviaChallenge3DWidget(container, userOptions = {}) {
   let hoveredOption = null;
   let clickBurst = 0;
   let cameraTransitioning = false;
+  let targetZoomDistance = null;
 
   function detectHoveredOption(clientX, clientY) {
     const rect = renderer.domElement.getBoundingClientRect();
@@ -901,7 +906,8 @@ export function createTriviaChallenge3DWidget(container, userOptions = {}) {
 
     const opt = locked ? null : detectHoveredOption(e.clientX, e.clientY);
     hoveredOption = opt;
-    renderer.domElement.style.cursor = opt !== null ? 'pointer' : options.enableOrbit ? 'grab' : 'default';
+    const canDragRotate = Boolean(options.enableOrbit && options.enableRotate);
+    renderer.domElement.style.cursor = opt !== null ? 'pointer' : canDragRotate ? 'grab' : 'default';
   }
 
   function onPointerLeave() {
@@ -915,6 +921,11 @@ export function createTriviaChallenge3DWidget(container, userOptions = {}) {
     pointerDownX = e.clientX;
     pointerDownY = e.clientY;
     if (cameraTransitioning) cameraTransitioning = false;
+  }
+
+  function onWheel() {
+    targetZoomDistance = null;
+    cameraTransitioning = false;
   }
 
   function selectOptionAtIndex(idx) {
@@ -974,6 +985,7 @@ export function createTriviaChallenge3DWidget(container, userOptions = {}) {
   domEl.addEventListener('pointerleave', onPointerLeave);
   domEl.addEventListener('pointerdown', onPointerDown);
   domEl.addEventListener('pointerup', onPointerUp);
+  domEl.addEventListener('wheel', onWheel, { passive: true });
   domEl.addEventListener('webglcontextlost', onContextLost);
   domEl.addEventListener('webglcontextrestored', onContextRestored);
 
@@ -1116,6 +1128,19 @@ export function createTriviaChallenge3DWidget(container, userOptions = {}) {
       }
     }
 
+    if (targetZoomDistance !== null) {
+      _zoomDir.subVectors(camera.position, DEFAULT_TARGET);
+      const curDist = _zoomDir.length() || DEFAULT_CAM_POS.distanceTo(DEFAULT_TARGET);
+      const nextDist = THREE.MathUtils.damp(curDist, targetZoomDistance, 10, dt);
+      _zoomDir.normalize().multiplyScalar(nextDist);
+      camera.position.copy(DEFAULT_TARGET).add(_zoomDir);
+      if (Math.abs(nextDist - targetZoomDistance) < 0.005) {
+        _zoomDir.normalize().multiplyScalar(targetZoomDistance);
+        camera.position.copy(DEFAULT_TARGET).add(_zoomDir);
+        targetZoomDistance = null;
+      }
+    }
+
     if (controls) controls.update();
     renderer.render(scene, camera);
 
@@ -1193,7 +1218,22 @@ export function createTriviaChallenge3DWidget(container, userOptions = {}) {
       clickBurst = 1.0;
       if (audioEnabled) sound.playPulse();
     },
+    zoomIn: (step = 0.85) => {
+      cameraTransitioning = false;
+      const baseDist = targetZoomDistance ?? camera.position.distanceTo(DEFAULT_TARGET);
+      const minD = controls ? controls.minDistance : 3.4;
+      const maxD = controls ? controls.maxDistance : 10.8;
+      targetZoomDistance = THREE.MathUtils.clamp(baseDist - Math.abs(Number(step) || 0.85), minD, maxD);
+    },
+    zoomOut: (step = 0.85) => {
+      cameraTransitioning = false;
+      const baseDist = targetZoomDistance ?? camera.position.distanceTo(DEFAULT_TARGET);
+      const minD = controls ? controls.minDistance : 3.4;
+      const maxD = controls ? controls.maxDistance : 10.8;
+      targetZoomDistance = THREE.MathUtils.clamp(baseDist + Math.abs(Number(step) || 0.85), minD, maxD);
+    },
     resetCamera: () => {
+      targetZoomDistance = null;
       cameraTransitioning = true;
     },
     destroy: () => {
@@ -1205,6 +1245,7 @@ export function createTriviaChallenge3DWidget(container, userOptions = {}) {
       domEl.removeEventListener('pointerleave', onPointerLeave);
       domEl.removeEventListener('pointerdown', onPointerDown);
       domEl.removeEventListener('pointerup', onPointerUp);
+      domEl.removeEventListener('wheel', onWheel);
       domEl.removeEventListener('webglcontextlost', onContextLost);
       domEl.removeEventListener('webglcontextrestored', onContextRestored);
       controls?.dispose();

@@ -21,6 +21,7 @@ export interface TriviaChallenge3DWidgetProps {
   background?: string | 'transparent';
   showStudioFloor?: boolean;
   enableOrbit?: boolean;
+  enableRotate?: boolean;
   enableSoundFeedback?: boolean;
   masterVolume?: number;
   className?: string;
@@ -53,6 +54,7 @@ export function TriviaChallenge3DWidget({
   background = 'transparent',
   showStudioFloor = false,
   enableOrbit = true,
+  enableRotate = true,
   enableSoundFeedback = true,
   masterVolume = 70,
   className = '',
@@ -93,6 +95,7 @@ export function TriviaChallenge3DWidget({
         background,
         showStudioFloor,
         enableOrbit,
+        enableRotate,
         enableSoundFeedback,
         masterVolume,
         onSelectOption: (ev) => onSelectRef.current?.(ev),
@@ -114,7 +117,7 @@ export function TriviaChallenge3DWidget({
     };
     // Mount once; dynamic updates happen via controller methods below
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [background, showStudioFloor, enableOrbit]);
+  }, [background, showStudioFloor, enableOrbit, enableRotate]);
 
   useEffect(() => {
     controllerRef.current?.setQuestion({

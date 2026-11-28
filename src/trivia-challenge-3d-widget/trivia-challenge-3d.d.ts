@@ -30,6 +30,7 @@ export interface TriviaChallenge3DOptions {
   background?: string | 'transparent';
   showStudioFloor?: boolean;
   enableOrbit?: boolean;
+  enableRotate?: boolean;
   enableSoundFeedback?: boolean;
   masterVolume?: number;
   locked?: boolean;
@@ -51,6 +52,8 @@ export interface TriviaChallenge3DController {
   setAudioEnabled(enabled: boolean): void;
   setMasterVolume(percent: number): void;
   pulse(): void;
+  zoomIn(step?: number): void;
+  zoomOut(step?: number): void;
   resetCamera(): void;
   destroy(): void;
 }

@@ -1,12 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Volume2, VolumeX, RotateCcw, ZoomIn, ZoomOut } from 'lucide-react';
 import { CurrentSlotInfo } from '../types';
 import { TriviaChallenge3DWidget } from '../trivia-challenge-3d-widget/TriviaChallenge3DWidget';
 import { applyTriviaChallenge3DSize } from '../trivia-challenge-3d-widget/trivia-challenge-sizing.js';
-import type {
-  TriviaChallenge3DController,
-  TriviaChallengeMotionMode,
-} from '../trivia-challenge-3d-widget/trivia-challenge-3d';
+import { ZoomControls3DWidget } from '../zoom-controls-3d-widget/ZoomControls3DWidget';
+import { applyZoomControls3DSize } from '../zoom-controls-3d-widget/zoom-controls-sizing.js';
+import type { TriviaChallenge3DController } from '../trivia-challenge-3d-widget/trivia-challenge-3d';
 
 interface QuestionCardProps {
   slotInfo: CurrentSlotInfo;
@@ -21,13 +19,6 @@ interface QuestionCardProps {
   onSelectOption: (index: number) => void;
   onTimeUp?: () => void;
 }
-
-const MOTION_MODES: Array<{ id: TriviaChallengeMotionMode; label: string }> = [
-  { id: 'float', label: 'Float' },
-  { id: 'pulse', label: 'Pulse' },
-  { id: 'orbit', label: 'Orbit' },
-  { id: 'tilt', label: 'Tilt' },
-];
 
 export const QuestionCard: React.FC<QuestionCardProps> = ({
   slotInfo,
@@ -45,6 +36,7 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
   const { question } = slotInfo;
   const stageWrapperRef = useRef<HTMLDivElement | null>(null);
   const slotContainerRef = useRef<HTMLDivElement | null>(null);
+  const zoomSlotRef = useRef<HTMLDivElement | null>(null);
   const controllerRef = useRef<TriviaChallenge3DController | null>(null);
   const timeUpFiredRef = useRef(false);
   const onTimeUpRef = useRef(onTimeUp);
@@ -52,40 +44,42 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
   onTimeUpRef.current = onTimeUp;
   onSelectOptionRef.current = onSelectOption;
 
-  const [motionMode, setMotionMode] = useState<TriviaChallengeMotionMode>('float');
-  const [soundEnabled, setSoundEnabled] = useState(true);
-  const [sizeScale, setSizeScale] = useState(1.0);
   const [webglUnavailable, setWebglUnavailable] = useState(false);
+  const [zoomWebglLost, setZoomWebglLost] = useState(false);
   const [fallbackRemainingSecs, setFallbackRemainingSecs] = useState(() =>
     Math.max(0, Math.ceil((slotInfo.slotEnd - (Date.now() + clockOffset)) / 1000))
   );
 
-  // Compute initial synchronized seconds on slot change
   const initialRemainingSeconds = Math.max(
     0,
     (slotInfo.slotEnd - (Date.now() + clockOffset)) / 1000
   );
   const maxTimerSeconds = Math.max(1, totalDurationMs / 1000);
 
-  // Sync 3D monitor container size responsively via trivia-challenge-sizing.js
+  // Sync both 3D monitor and 3D zoom controls responsively using their dedicated sizing helpers
   useEffect(() => {
     const wrapper = stageWrapperRef.current;
-    const slotEl = slotContainerRef.current;
-    if (!wrapper || !slotEl) return;
+    if (!wrapper) return;
 
-    const updateSize = () => {
+    const updateSizes = () => {
       const availW = Math.max(240, Math.floor(wrapper.clientWidth));
-      const baseW = Math.min(availW, 760);
-      const targetW = Math.min(availW, Math.max(240, Math.round(baseW * sizeScale)));
-      const targetH = Math.max(210, Math.round(targetW * 0.625));
-      applyTriviaChallenge3DSize(slotEl, { width: targetW, height: targetH });
+      if (slotContainerRef.current) {
+        const monW = Math.min(availW, 760);
+        const monH = Math.max(210, Math.round(monW * 0.625));
+        applyTriviaChallenge3DSize(slotContainerRef.current, { width: monW, height: monH });
+      }
+      if (zoomSlotRef.current) {
+        const zoomW = Math.min(availW, 280);
+        const zoomH = Math.round(zoomW * 0.6);
+        applyZoomControls3DSize(zoomSlotRef.current, { width: zoomW, height: zoomH });
+      }
     };
 
-    updateSize();
-    const ro = new ResizeObserver(updateSize);
+    updateSizes();
+    const ro = new ResizeObserver(updateSizes);
     ro.observe(wrapper);
     return () => ro.disconnect();
-  }, [sizeScale]);
+  }, []);
 
   // Synchronize the 3D monitor timer directly to the server-calibrated slot deadline
   useEffect(() => {
@@ -146,8 +140,13 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
     }
   }, []);
 
-  const handleSmaller = () => setSizeScale((s) => Math.max(0.6, Number((s - 0.15).toFixed(2))));
-  const handleBigger = () => setSizeScale((s) => Math.min(1.15, Number((s + 0.15).toFixed(2))));
+  const handleZoomIn = useCallback(() => {
+    controllerRef.current?.zoomIn(0.85);
+  }, []);
+
+  const handleZoomOut = useCallback(() => {
+    controllerRef.current?.zoomOut(0.85);
+  }, []);
 
   const letters = ['A', 'B', 'C', 'D'];
 
@@ -171,8 +170,8 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
         </span>
       </div>
 
-      {/* 3D Trivia Challenge Monitor Replacing Question Card, Answers Card, and Timer */}
-      <div ref={stageWrapperRef} className="w-full flex flex-col items-center">
+      {/* 3D Trivia Challenge Monitor (Locked to Float motion; scroll/pinch zoom enabled; rotation locked) */}
+      <div ref={stageWrapperRef} className="w-full flex flex-col items-center gap-2.5">
         {!webglUnavailable ? (
           <div
             ref={slotContainerRef}
@@ -188,11 +187,12 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
               maxTimerSeconds={maxTimerSeconds}
               timerRunning={false}
               locked={hasAnswered}
-              motionMode={motionMode}
+              motionMode="float"
               background="transparent"
               showStudioFloor={false}
               enableOrbit={true}
-              enableSoundFeedback={soundEnabled}
+              enableRotate={false}
+              enableSoundFeedback={true}
               onSelectOption={handleWidgetSelect}
               onContextLost={(lost) => setWebglUnavailable(lost)}
               onControllerReady={(ctrl) => {
@@ -237,103 +237,81 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
             </div>
           </div>
         )}
-      </div>
 
-      {/* Answer Outcome Feedback Banner */}
-      {revealed && (
-        <div
-          className={`p-3 sm:p-3.5 rounded-xl text-center font-bold text-sm border transition-all ${
-            myAnswer === question.correctAnswer
-              ? 'bg-[#2ecc71]/15 border-[#2ecc71]/70 text-[#6ee7b7]'
-              : 'bg-[#ff4d6d]/15 border-[#ff4d6d]/70 text-[#fda4af]'
-          }`}
-        >
-          {myAnswer === question.correctAnswer ? (
-            <span className="tabular-nums">Correct! +{lastGain} points</span>
-          ) : myAnswer === -1 ? (
-            <span>
-              Time&apos;s up! Correct answer:{' '}
-              <strong className="text-white underline decoration-[#38bdf8]">
-                {question.options[question.correctAnswer]}
-              </strong>
-            </span>
-          ) : (
-            <span>
-              Incorrect! Correct answer:{' '}
-              <strong className="text-white underline decoration-[#38bdf8]">
-                {question.options[question.correctAnswer]}
-              </strong>
-            </span>
-          )}
-        </div>
-      )}
+        {/* Answer Outcome Feedback Banner */}
+        {revealed && (
+          <div
+            className={`w-full p-3 sm:p-3.5 rounded-xl text-center font-bold text-sm border transition-all ${
+              myAnswer === question.correctAnswer
+                ? 'bg-[#2ecc71]/15 border-[#2ecc71]/70 text-[#6ee7b7]'
+                : 'bg-[#ff4d6d]/15 border-[#ff4d6d]/70 text-[#fda4af]'
+            }`}
+          >
+            {myAnswer === question.correctAnswer ? (
+              <span className="tabular-nums">Correct! +{lastGain} points</span>
+            ) : myAnswer === -1 ? (
+              <span>
+                Time&apos;s up! Correct answer:{' '}
+                <strong className="text-white underline decoration-[#38bdf8]">
+                  {question.options[question.correctAnswer]}
+                </strong>
+              </span>
+            ) : (
+              <span>
+                Incorrect! Correct answer:{' '}
+                <strong className="text-white underline decoration-[#38bdf8]">
+                  {question.options[question.correctAnswer]}
+                </strong>
+              </span>
+            )}
+          </div>
+        )}
 
-      {/* Compact Control Dock Below the 3D Stage */}
-      {!webglUnavailable && (
-        <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-xl bg-[#0e0824]/90 border border-[#3b2568]/60 text-xs">
-          {/* Motion Mode Selector */}
-          <div className="flex items-center gap-1 bg-[#160f35] p-0.5 rounded-lg border border-[#2d2154]">
-            {MOTION_MODES.map((m) => (
-              <button
-                key={m.id}
-                type="button"
-                onClick={() => setMotionMode(m.id)}
-                className={`px-2.5 py-1 rounded-md font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                  motionMode === m.id
-                    ? 'bg-[#38bdf8]/20 text-[#7dd3fc] border border-[#38bdf8]/40'
-                    : 'text-[#9aa0c0] hover:text-white border border-transparent'
-                }`}
+        {/* 3D Zoom In & Zoom Out Controls replacing the bottom control buttons */}
+        {!webglUnavailable && (
+          <div className="flex flex-col items-center gap-1 pt-0.5">
+            {!zoomWebglLost ? (
+              <div
+                ref={zoomSlotRef}
+                className="rounded-xl overflow-hidden border border-[#38bdf8]/20 bg-[#080d22]/85"
+                style={{ width: '280px', height: '168px' }}
               >
-                {m.label}
-              </button>
-            ))}
+                <ZoomControls3DWidget
+                  initialZoom={100}
+                  minZoom={50}
+                  maxZoom={200}
+                  step={15}
+                  motionMode="float"
+                  background="transparent"
+                  showStudioFloor={false}
+                  enableOrbit={false}
+                  enableSoundFeedback={true}
+                  onZoomIn={handleZoomIn}
+                  onZoomOut={handleZoomOut}
+                  onContextLost={(lost) => setZoomWebglLost(lost)}
+                />
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleZoomIn}
+                  className="px-3.5 py-2 rounded-lg bg-[#160f35] border border-[#38bdf8]/40 text-xs font-bold text-[#7dd3fc] hover:text-white cursor-pointer"
+                >
+                  Zoom In
+                </button>
+                <button
+                  type="button"
+                  onClick={handleZoomOut}
+                  className="px-3.5 py-2 rounded-lg bg-[#160f35] border border-[#38bdf8]/40 text-xs font-bold text-[#7dd3fc] hover:text-white cursor-pointer"
+                >
+                  Zoom Out
+                </button>
+              </div>
+            )}
           </div>
-
-          {/* Sizing, Sound & Camera Reset */}
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={handleSmaller}
-              disabled={sizeScale <= 0.6}
-              title="Smaller 3D Monitor"
-              aria-label="Make 3D monitor smaller"
-              className="p-1.5 rounded-lg bg-[#160f35] border border-[#2d2154] text-[#9aa0c0] hover:text-white disabled:opacity-40 transition-colors cursor-pointer"
-            >
-              <ZoomOut size={14} />
-            </button>
-            <button
-              type="button"
-              onClick={handleBigger}
-              disabled={sizeScale >= 1.15}
-              title="Larger 3D Monitor"
-              aria-label="Make 3D monitor larger"
-              className="p-1.5 rounded-lg bg-[#160f35] border border-[#2d2154] text-[#9aa0c0] hover:text-white disabled:opacity-40 transition-colors cursor-pointer"
-            >
-              <ZoomIn size={14} />
-            </button>
-            <button
-              type="button"
-              onClick={() => setSoundEnabled((v) => !v)}
-              title={soundEnabled ? 'Mute 3D feedback sound' : 'Unmute 3D feedback sound'}
-              aria-label={soundEnabled ? 'Mute sound' : 'Unmute sound'}
-              className="px-2.5 py-1.5 rounded-lg bg-[#160f35] border border-[#2d2154] text-[#9aa0c0] hover:text-white flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors cursor-pointer"
-            >
-              {soundEnabled ? <Volume2 size={14} className="text-[#7dd3fc]" /> : <VolumeX size={14} />}
-              <span className="hidden sm:inline">{soundEnabled ? 'Sound' : 'Muted'}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => controllerRef.current?.resetCamera()}
-              title="Reset 3D camera angle"
-              aria-label="Center 3D view"
-              className="px-2.5 py-1.5 rounded-lg bg-[#160f35] border border-[#2d2154] text-[#9aa0c0] hover:text-white flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors cursor-pointer"
-            >
-              <RotateCcw size={13} />
-              <span className="hidden sm:inline">Center</span>
-            </button>
-          </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 };

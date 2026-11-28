@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Zoom Controls 3D — Clickable (i+ &amp; (i- Live Demo</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, sans-serif;
+        background: #d7dce3;
+        color: #0f172a;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        gap: 16px;
+        padding: 20px;
+        box-sizing: border-box;
+      }
+      #zoom-slot {
+        border-radius: 16px;
+        overflow: hidden;
+        border: 1px solid rgba(15, 23, 42, 0.12);
+        box-shadow: 0 20px 50px rgba(15, 23, 42, 0.14);
+      }
+      .bar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 12px 16px;
+        border-radius: 14px;
+        background: #ffffff;
+        border: 1px solid rgba(15, 23, 42, 0.1);
+      }
+      button {
+        padding: 8px 12px;
+        border-radius: 8px;
+        border: 1px solid rgba(15, 23, 42, 0.15);
+        background: #f1f5f9;
+        color: #0f172a;
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #e2e8f0;
+      }
+      #status {
+        font-size: 14px;
+        font-weight: 600;
+        color: #1e293b;
+      }
+    </style>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.174.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.174.0/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div id="zoom-slot"></div>
+    <div id="status">Zoom Level: 100% — Click (i+ to Zoom In or (i- to Zoom Out</div>
+    <div class="bar">
+      <button id="m-float">Float</button>
+      <button id="m-pulse">Pulse</button>
+      <button id="m-orbit">Orbit</button>
+      <button id="m-tilt">Tilt</button>
+      <button id="btn-smaller">Make Smaller (-)</button>
+      <button id="btn-bigger">Make Bigger (+)</button>
+    </div>
+
+    <script type="module">
+      import { createZoomControls3DWidget } from './zoom-controls-3d.js';
+      import { createZoomControls3DSizer } from './zoom-controls-sizing.js';
+
+      const slot = document.getElementById('zoom-slot');
+      const status = document.getElementById('status');
+
+      const sizer = createZoomControls3DSizer(slot, 'lg');
+      const zoomUI = createZoomControls3DWidget(slot, {
+        initialZoom: 100,
+        step: 15,
+        motionMode: 'float',
+        onZoomIn: ({ zoom }) => {
+          status.textContent = `Zoomed In! Current Zoom: ${zoom}%`;
+        },
+        onZoomOut: ({ zoom }) => {
+          status.textContent = `Zoomed Out! Current Zoom: ${zoom}%`;
+        },
+      });
+
+      document.getElementById('m-float').onclick = () => zoomUI.setMotionMode('float');
+      document.getElementById('m-pulse').onclick = () => zoomUI.setMotionMode('pulse');
+      document.getElementById('m-orbit').onclick = () => zoomUI.setMotionMode('orbit');
+      document.getElementById('m-tilt').onclick = () => zoomUI.setMotionMode('tilt');
+      document.getElementById('btn-smaller').onclick = () => {
+        const s = sizer.makeSmaller(0.2);
+        status.textContent = `Widget resized smaller: ${s.width} x ${s.height}px`;
+      };
+      document.getElementById('btn-bigger').onclick = () => {
+        const s = sizer.makeBigger(0.2);
+        status.textContent = `Widget resized bigger: ${s.width} x ${s.height}px`;
+      };
+    </script>
+  </body>
+</html>
