@@ -69,8 +69,8 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
         applyTriviaChallenge3DSize(slotContainerRef.current, { width: monW, height: monH });
       }
       if (zoomSlotRef.current) {
-        const zoomW = Math.min(availW, 280);
-        const zoomH = Math.round(zoomW * 0.6);
+        const zoomW = Math.min(availW, 196);
+        const zoomH = Math.max(46, Math.round(zoomW * 0.285));
         applyZoomControls3DSize(zoomSlotRef.current, { width: zoomW, height: zoomH });
       }
     };
@@ -141,11 +141,11 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
   }, []);
 
   const handleZoomIn = useCallback(() => {
-    controllerRef.current?.zoomIn(0.85);
+    controllerRef.current?.zoomIn(0.55);
   }, []);
 
   const handleZoomOut = useCallback(() => {
-    controllerRef.current?.zoomOut(0.85);
+    controllerRef.current?.zoomOut(0.55);
   }, []);
 
   const letters = ['A', 'B', 'C', 'D'];
@@ -274,7 +274,7 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
               <div
                 ref={zoomSlotRef}
                 className="rounded-xl overflow-hidden border border-[#38bdf8]/20 bg-[#080d22]/85"
-                style={{ width: '280px', height: '168px' }}
+                style={{ width: '196px', height: '56px' }}
               >
                 <ZoomControls3DWidget
                   initialZoom={100}

@@ -478,6 +478,18 @@ export default {
         return json(null);
       }
 
+      // 6b. Static Media Assets (/sgss-intro-video/*) via Wrangler [assets] binding (supports 206 byte ranges)
+      if (path.startsWith("/sgss-intro-video/") && env?.STATIC_ASSETS) {
+        const assetRes = await env.STATIC_ASSETS.fetch(request);
+        const headers = new Headers(assetRes.headers);
+        headers.set("Access-Control-Allow-Origin", "*");
+        return new Response(assetRes.body, {
+          status: assetRes.status,
+          statusText: assetRes.statusText,
+          headers,
+        });
+      }
+
       // 7. Static Inlined Assets (/assets/*)
       if (ASSETS[path]) {
         const ext = path.split(".").pop() || "";

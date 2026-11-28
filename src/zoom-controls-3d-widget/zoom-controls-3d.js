@@ -377,8 +377,8 @@ export function createZoomControls3DWidget(container, userOptions = {}) {
   const width = container.clientWidth || 640;
   const height = container.clientHeight || 420;
   const camera = new THREE.PerspectiveCamera(34, width / height, 0.1, 60);
-  const DEFAULT_CAM_POS = new THREE.Vector3(0.0, 0.45, 7.6);
-  const DEFAULT_TARGET = new THREE.Vector3(0.0, -0.1, 0);
+  const DEFAULT_CAM_POS = new THREE.Vector3(0.0, 0.25, 5.15);
+  const DEFAULT_TARGET = new THREE.Vector3(0.0, 0.04, 0);
   camera.position.copy(DEFAULT_CAM_POS);
 
   const renderer = new THREE.WebGLRenderer({
@@ -677,7 +677,7 @@ export function createZoomControls3DWidget(container, userOptions = {}) {
     lensMat: lensMatLeft,
     symbolType: 'plus',
   });
-  zoomInBtn.root.position.set(-1.58, 0.04, 0.0);
+  zoomInBtn.root.position.set(-1.62, 0.04, 0.0);
   zoomInBtn.root.rotation.set(-0.04, 0.24, 0.0);
   stageGroup.add(zoomInBtn.root);
 
@@ -687,7 +687,7 @@ export function createZoomControls3DWidget(container, userOptions = {}) {
     lensMat: lensMatRight,
     symbolType: 'minus',
   });
-  zoomOutBtn.root.position.set(1.58, 0.04, 0.0);
+  zoomOutBtn.root.position.set(1.48, 0.04, 0.0);
   zoomOutBtn.root.rotation.set(-0.04, 0.2, 0.0);
   stageGroup.add(zoomOutBtn.root);
 
@@ -705,6 +705,8 @@ export function createZoomControls3DWidget(container, userOptions = {}) {
     controls.minPolarAngle = Math.PI * 0.2;
     controls.maxPolarAngle = Math.PI * 0.72;
     controls.update();
+  } else {
+    camera.lookAt(DEFAULT_TARGET);
   }
 
   const raycaster = new THREE.Raycaster();

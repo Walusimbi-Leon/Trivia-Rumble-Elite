@@ -9,3 +9,8 @@ compatibility_flags = ["nodejs_compat"]
 # never committed to wrangler.toml.
 [vars]
 SUPPORT_URL = "https://donate-to-sgss.pages.dev"
+
+[assets]
+directory = "./public"
+binding = "STATIC_ASSETS"
+run_worker_first = true

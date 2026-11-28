@@ -15,7 +15,7 @@ export const ZOOM_CONTROLS_SIZE_PRESETS = {
 
 function toCssUnit(value) {
   if (typeof value === 'number' && Number.isFinite(value)) {
-    return `${Math.max(80, Math.round(value))}px`;
+    return `${Math.max(40, Math.round(value))}px`;
   }
   return String(value);
 }

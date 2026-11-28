@@ -583,8 +583,8 @@ export function createTriviaChallenge3DWidget(container, userOptions = {}) {
   }
 
   const camera = new THREE.PerspectiveCamera(34, width / height, 0.1, 60);
-  const DEFAULT_CAM_POS = new THREE.Vector3(-1.35, 0.65, 6.25);
-  const DEFAULT_TARGET = new THREE.Vector3(0, 0.05, 0);
+  const DEFAULT_CAM_POS = new THREE.Vector3(-0.56, 0.30, 4.78);
+  const DEFAULT_TARGET = new THREE.Vector3(0, 0.10, 0);
   camera.position.copy(DEFAULT_CAM_POS);
 
   const renderer = new THREE.WebGLRenderer({
@@ -860,8 +860,8 @@ export function createTriviaChallenge3DWidget(container, userOptions = {}) {
     controls.enableRotate = Boolean(options.enableRotate);
     controls.enableZoom = true;
     controls.enablePan = false;
-    controls.minDistance = 3.4;
-    controls.maxDistance = 10.8;
+    controls.minDistance = 3.7;
+    controls.maxDistance = 14.8;
     controls.minPolarAngle = Math.PI * 0.22;
     controls.maxPolarAngle = Math.PI * 0.72;
     controls.update();
@@ -1218,19 +1218,19 @@ export function createTriviaChallenge3DWidget(container, userOptions = {}) {
       clickBurst = 1.0;
       if (audioEnabled) sound.playPulse();
     },
-    zoomIn: (step = 0.85) => {
+    zoomIn: (step = 0.55) => {
       cameraTransitioning = false;
       const baseDist = targetZoomDistance ?? camera.position.distanceTo(DEFAULT_TARGET);
-      const minD = controls ? controls.minDistance : 3.4;
-      const maxD = controls ? controls.maxDistance : 10.8;
-      targetZoomDistance = THREE.MathUtils.clamp(baseDist - Math.abs(Number(step) || 0.85), minD, maxD);
+      const minD = controls ? controls.minDistance : 3.7;
+      const maxD = controls ? controls.maxDistance : 14.8;
+      targetZoomDistance = THREE.MathUtils.clamp(baseDist - Math.abs(Number(step) || 0.55), minD, maxD);
     },
-    zoomOut: (step = 0.85) => {
+    zoomOut: (step = 0.55) => {
       cameraTransitioning = false;
       const baseDist = targetZoomDistance ?? camera.position.distanceTo(DEFAULT_TARGET);
-      const minD = controls ? controls.minDistance : 3.4;
-      const maxD = controls ? controls.maxDistance : 10.8;
-      targetZoomDistance = THREE.MathUtils.clamp(baseDist + Math.abs(Number(step) || 0.85), minD, maxD);
+      const minD = controls ? controls.minDistance : 3.7;
+      const maxD = controls ? controls.maxDistance : 14.8;
+      targetZoomDistance = THREE.MathUtils.clamp(baseDist + Math.abs(Number(step) || 0.55), minD, maxD);
     },
     resetCamera: () => {
       targetZoomDistance = null;

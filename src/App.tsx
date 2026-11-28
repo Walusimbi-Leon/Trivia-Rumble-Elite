@@ -12,6 +12,7 @@ import { Header } from './components/Header';
 import { QuestionCard } from './components/QuestionCard';
 import { Leaderboard } from './components/Leaderboard';
 import { LegalModal } from './components/LegalModal';
+import { SgssIntroVideo } from './sgss-intro-video/SgssIntroVideo';
 import initialBankJson from './data/initial_bank.json';
 
 const SLOT_DURATION = 20000;
@@ -67,6 +68,7 @@ function filterSlotAnswers(
 export default function App() {
   // ── State ──────────────────────────────────────────────────────────────────
   const [loading, setLoading] = useState(true);
+  const [introFinished, setIntroFinished] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const [me, setMe] = useState<Player>({
@@ -537,11 +539,32 @@ export default function App() {
   };
 
   // ── Render ─────────────────────────────────────────────────────────────────
+  if (!introFinished) {
+    return (
+      <div className="fixed inset-0 z-50 bg-[#060911] flex items-center justify-center overflow-hidden">
+        <SgssIntroVideo
+          mp4Src="/sgss-intro-video/assets/sgss-intro.mp4"
+          webmSrc="/sgss-intro-video/assets/sgss-intro.webm"
+          posterSrc="/sgss-intro-video/assets/sgss-intro-poster.jpg"
+          format="fullscreen"
+          focalPoint="monitor"
+          autoPlay={true}
+          muted={true}
+          showSkipButton={true}
+          skipButtonLabel="Skip Intro"
+          fadeOutOnEnd={true}
+          onEnded={() => setIntroFinished(true)}
+          className="w-full h-full"
+        />
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center min-h-[60vh] gap-4 p-4 text-center">
         <div className="w-9 h-9 border-3 border-white/20 border-t-[#7c5cff] rounded-full animate-spin" />
-        <p className="text-sm font-semibold text-[#9aa0c0]">Connecting to the arena…</p>
+        <p className="text-sm font-semibold text-[#9aa0c0]">Finalizing arena sync…</p>
       </div>
     );
   }
