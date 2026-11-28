@@ -479,7 +479,7 @@ export default {
       }
 
       // 6b. Static Media Assets (/sgss-intro-video/*) via Wrangler [assets] binding (supports 206 byte ranges)
-      if (path.startsWith("/sgss-intro-video/") && env?.STATIC_ASSETS) {
+      if ((path.startsWith("/sgss-intro-video/") || path.startsWith("/arena-intro-video/")) && env?.STATIC_ASSETS) {
         return env.STATIC_ASSETS.fetch(request);
       }
 

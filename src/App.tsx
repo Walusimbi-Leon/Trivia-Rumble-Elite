@@ -13,6 +13,7 @@ import { QuestionCard } from './components/QuestionCard';
 import { Leaderboard } from './components/Leaderboard';
 import { LegalModal } from './components/LegalModal';
 import { SgssIntroVideo } from './sgss-intro-video/SgssIntroVideo';
+import { ArenaIntroVideo } from './arena-intro-video/ArenaIntroVideo';
 import initialBankJson from './data/initial_bank.json';
 
 const SLOT_DURATION = 20000;
@@ -68,7 +69,12 @@ function filterSlotAnswers(
 export default function App() {
   // ── State ──────────────────────────────────────────────────────────────────
   const [loading, setLoading] = useState(true);
-  const [introFinished, setIntroFinished] = useState(false);
+  const [introStage, setIntroStage] = useState<'sgss' | 'arena' | 'done'>('sgss');
+  const [leaderboardSynced, setLeaderboardSynced] = useState(false);
+  const [monitorReady, setMonitorReady] = useState(false);
+  const [arenaCycleDone, setArenaCycleDone] = useState(false);
+  const [arenaIntroFading, setArenaIntroFading] = useState(false);
+  const arenaCycleDoneRef = useRef(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const [me, setMe] = useState<Player>({
@@ -389,6 +395,7 @@ export default function App() {
         }
 
         if (mounted) {
+          setLeaderboardSynced(true);
           setLoading(false);
         }
       } catch (err: any) {
@@ -538,8 +545,63 @@ export default function App() {
     }
   };
 
+  const handleMonitorReady = useCallback(() => {
+    setMonitorReady(true);
+  }, []);
+
+  // Re-sync leaderboard & active slot answers cleanly while the Arena Intro Video plays
+  useEffect(() => {
+    if (introStage !== 'arena' || loading) return;
+    let active = true;
+    syncPlayers().finally(() => {
+      if (active) setLeaderboardSynced(true);
+    });
+    return () => {
+      active = false;
+    };
+  }, [introStage, loading, syncPlayers]);
+
+  // Safety failsafe if strict autoplay throttles video end callbacks on locked mobile WebViews
+  useEffect(() => {
+    if (introStage === 'sgss') {
+      const timer = window.setTimeout(() => {
+        setIntroStage((prev) => (prev === 'sgss' ? 'arena' : prev));
+      }, 9000);
+      return () => window.clearTimeout(timer);
+    }
+    if (introStage === 'arena') {
+      const timer = window.setTimeout(() => {
+        if (!arenaCycleDoneRef.current) {
+          arenaCycleDoneRef.current = true;
+          setArenaCycleDone(true);
+        }
+      }, 7500);
+      return () => window.clearTimeout(timer);
+    }
+  }, [introStage]);
+
+  const appFullyReady =
+    !loading &&
+    !errorMsg &&
+    Boolean(currentSlotInfo) &&
+    leaderboardSynced &&
+    monitorReady;
+
+  // Fade out Arena Intro Video only once full setup + leaderboard sync + 3D monitor are ready
+  useEffect(() => {
+    if (introStage !== 'arena') return;
+    if (!arenaCycleDone) return;
+    if (!appFullyReady && !errorMsg) return;
+    setArenaIntroFading(true);
+    const fadeTimer = window.setTimeout(() => {
+      setIntroStage('done');
+      setArenaIntroFading(false);
+    }, 460);
+    return () => window.clearTimeout(fadeTimer);
+  }, [introStage, arenaCycleDone, appFullyReady, errorMsg]);
+
   // ── Render ─────────────────────────────────────────────────────────────────
-  if (!introFinished) {
+  if (introStage === 'sgss') {
     return (
       <div className="fixed inset-0 z-50 bg-[#060911] flex items-center justify-center overflow-hidden">
         <SgssIntroVideo
@@ -550,26 +612,16 @@ export default function App() {
           focalPoint="monitor"
           autoPlay={true}
           muted={true}
-          showSkipButton={true}
-          skipButtonLabel="Skip Intro"
+          showSkipButton={false}
           fadeOutOnEnd={true}
-          onEnded={() => setIntroFinished(true)}
+          onEnded={() => setIntroStage('arena')}
           className="w-full h-full"
         />
       </div>
     );
   }
 
-  if (loading) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center min-h-[60vh] gap-4 p-4 text-center">
-        <div className="w-9 h-9 border-3 border-white/20 border-t-[#7c5cff] rounded-full animate-spin" />
-        <p className="text-sm font-semibold text-[#9aa0c0]">Finalizing arena sync…</p>
-      </div>
-    );
-  }
-
-  if (errorMsg) {
+  if (introStage === 'done' && errorMsg) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center min-h-[60vh] p-4 text-center">
         <div className="bg-[#191c2e] border border-[#2a2e4a] rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4">
@@ -592,6 +644,34 @@ export default function App() {
   const liveCount = Math.max(1, Object.values(players).filter((p) => isLive(p, me.id)).length);
 
   return (
+    <>
+      {introStage === 'arena' && (
+        <div
+          className={`fixed inset-0 z-50 bg-[#04060d] flex items-center justify-center overflow-hidden transition-opacity duration-500 ${
+            arenaIntroFading ? 'opacity-0 pointer-events-none' : 'opacity-100'
+          }`}
+        >
+          <ArenaIntroVideo
+            mp4Src="/arena-intro-video/assets/trivia-rumble-arena-intro.mp4"
+            webmSrc="/arena-intro-video/assets/trivia-rumble-arena-intro.webm"
+            posterSrc="/arena-intro-video/assets/trivia-rumble-arena-poster.jpg"
+            format="fullscreen"
+            focalPoint="stack"
+            autoPlay={true}
+            loop={true}
+            muted={true}
+            showSkipButton={false}
+            fadeOutOnEnd={false}
+            onTimeUpdate={(ev) => {
+              if (ev.progress >= 0.94 && !arenaCycleDoneRef.current) {
+                arenaCycleDoneRef.current = true;
+                setArenaCycleDone(true);
+              }
+            }}
+            className="w-full h-full"
+          />
+        </div>
+      )}
     <div className="flex flex-col min-h-screen">
       {/* Top Navbar */}
       <Header player={me} />
@@ -601,7 +681,7 @@ export default function App() {
         <div className="grid grid-cols-1 md:grid-cols-[1fr_290px] gap-4 md:gap-6 items-start">
           {/* Main Column: Trivia Arena */}
           <div className="min-w-0">
-            {currentSlotInfo ? (
+            {!loading && currentSlotInfo ? (
               <QuestionCard
                 slotInfo={currentSlotInfo}
                 clockOffset={clockOffsetRef.current}
@@ -612,8 +692,10 @@ export default function App() {
                 lastGain={lastGain}
                 answeredCount={answeredCount}
                 liveCount={liveCount}
+                introActive={introStage !== 'done'}
                 onSelectOption={handleSelectOption}
                 onTimeUp={handleTimeUp}
+                onReady={handleMonitorReady}
               />
             ) : (
               <div className="bg-[#191c2e] border border-[#2a2e4a] rounded-xl p-8 text-center text-[#9aa0c0] text-sm">
@@ -657,5 +739,6 @@ export default function App() {
       {/* Legal Modal */}
       <LegalModal type={legalModalType} onClose={() => setLegalModalType(null)} />
     </div>
+    </>
   );
 }

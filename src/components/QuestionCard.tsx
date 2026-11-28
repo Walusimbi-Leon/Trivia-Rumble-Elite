@@ -16,8 +16,10 @@ interface QuestionCardProps {
   lastGain: number;
   answeredCount: number;
   liveCount: number;
+  introActive?: boolean;
   onSelectOption: (index: number) => void;
   onTimeUp?: () => void;
+  onReady?: () => void;
 }
 
 export const QuestionCard: React.FC<QuestionCardProps> = ({
@@ -30,8 +32,10 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
   lastGain,
   answeredCount,
   liveCount,
+  introActive = false,
   onSelectOption,
   onTimeUp,
+  onReady,
 }) => {
   const { question } = slotInfo;
   const stageWrapperRef = useRef<HTMLDivElement | null>(null);
@@ -43,6 +47,10 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
   const onSelectOptionRef = useRef(onSelectOption);
   onTimeUpRef.current = onTimeUp;
   onSelectOptionRef.current = onSelectOption;
+  const onReadyRef = useRef(onReady);
+  const introActiveRef = useRef(introActive);
+  onReadyRef.current = onReady;
+  introActiveRef.current = introActive;
 
   const [webglUnavailable, setWebglUnavailable] = useState(false);
   const [zoomWebglLost, setZoomWebglLost] = useState(false);
@@ -98,7 +106,7 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
         setFallbackRemainingSecs(Math.ceil(remainingSec));
       }
 
-      if (remainingMs <= 0 && !timeUpFiredRef.current) {
+      if (!introActiveRef.current && remainingMs <= 0 && !timeUpFiredRef.current) {
         timeUpFiredRef.current = true;
         onTimeUpRef.current?.();
       }
@@ -113,7 +121,7 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
   // Keyboard shortcuts (A/B/C/D or 1/2/3/4) for fast accessible answering
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (hasAnswered || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (hasAnswered || introActiveRef.current || e.metaKey || e.ctrlKey || e.altKey) return;
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
         return;
@@ -192,11 +200,15 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
               showStudioFloor={false}
               enableOrbit={true}
               enableRotate={false}
-              enableSoundFeedback={true}
+              enableSoundFeedback={!introActive}
               onSelectOption={handleWidgetSelect}
-              onContextLost={(lost) => setWebglUnavailable(lost)}
+              onContextLost={(lost) => {
+                setWebglUnavailable(lost);
+                if (lost) onReadyRef.current?.();
+              }}
               onControllerReady={(ctrl) => {
                 controllerRef.current = ctrl;
+                requestAnimationFrame(() => onReadyRef.current?.());
               }}
             />
           </div>
@@ -285,7 +297,7 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
                   background="transparent"
                   showStudioFloor={false}
                   enableOrbit={false}
-                  enableSoundFeedback={true}
+                  enableSoundFeedback={!introActive}
                   onZoomIn={handleZoomIn}
                   onZoomOut={handleZoomOut}
                   onContextLost={(lost) => setZoomWebglLost(lost)}
